@@ -64,10 +64,11 @@ type Gemini struct {
 }
 
 type OpenRouter struct {
-	BaseURL   string `yaml:"base_url"`
-	APIKeyEnv string `yaml:"api_key_env"`
-	APIKey    string `yaml:"api_key"`
-	Model     string `yaml:"model"`
+	BaseURL         string `yaml:"base_url"`
+	APIKeyEnv       string `yaml:"api_key_env"`
+	APIKey          string `yaml:"api_key"`
+	Model           string `yaml:"model"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
 }
 
 type Paths struct {
@@ -140,6 +141,9 @@ func (c *Config) defaults() {
 	}
 	if c.AI.OpenRouter.Model == "" {
 		c.AI.OpenRouter.Model = "openrouter/free"
+	}
+	if c.AI.OpenRouter.ReasoningEffort == "" {
+		c.AI.OpenRouter.ReasoningEffort = "minimal"
 	}
 	if c.AI.XAI.BaseURL == "" {
 		c.AI.XAI.BaseURL = "https://api.x.ai/v1"
@@ -222,7 +226,19 @@ func (c Config) Validate() error {
 	if c.AI.Enabled && c.AI.Provider == "openrouter" && (strings.TrimSpace(c.AI.OpenRouter.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.OpenRouter.APIKey) == "") {
 		return errors.New("invalid config: set exactly one of ai.openrouter.api_key_env or ai.openrouter.api_key")
 	}
+	if !validOpenRouterReasoningEffort(c.AI.OpenRouter.ReasoningEffort) {
+		return errors.New("invalid config: ai.openrouter.reasoning_effort must be none, minimal, low, medium, or high")
+	}
 	return nil
+}
+
+func validOpenRouterReasoningEffort(value string) bool {
+	switch value {
+	case "", "none", "minimal", "low", "medium", "high":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c Config) Password() (string, error) {

@@ -20,6 +20,7 @@ ai:
     api_key_env: "PLEXLINK_OPENROUTER_API_KEY"
     # Alternative for a local gitignored config: api_key: "change-me"
     model: "openrouter/free"
+    reasoning_effort: "minimal"
   xai:
     base_url: "https://api.x.ai/v1"
     api_key_env: "PLEXLINK_XAI_API_KEY"

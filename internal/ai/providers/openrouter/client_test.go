@@ -46,11 +46,12 @@ func TestRequestWireFormatAndResponse(t *testing.T) {
 	format := got["response_format"].(map[string]any)
 	schema := format["json_schema"].(map[string]any)
 	provider := got["provider"].(map[string]any)
+	reasoning := got["reasoning"].(map[string]any)
 	messages := got["messages"].([]any)
-	if format["type"] != "json_schema" || schema["strict"] != true || schema["schema"] == nil || provider["require_parameters"] != true || len(messages) != 2 {
+	if format["type"] != "json_schema" || schema["strict"] != true || schema["schema"] == nil || provider["require_parameters"] != true || reasoning["effort"] != "minimal" || len(messages) != 2 {
 		t.Fatalf("structured request=%+v", got)
 	}
-	for _, forbidden := range []string{"input", "tools", "generation_config", "reasoning", "store"} {
+	for _, forbidden := range []string{"input", "tools", "generation_config", "store"} {
 		if got[forbidden] != nil {
 			t.Fatalf("provider-specific field %q leaked", forbidden)
 		}
@@ -86,7 +87,6 @@ func TestInvalidProviderOutputs(t *testing.T) {
 	}{
 		{"invalid JSON", `{"model":"m","choices":[{"finish_reason":"stop","message":{"content":"{"}}]}`, ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie}},
 		{"missing choices", `{"model":"m","choices":[]}`, ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie}},
-		{"length", `{"model":"m","choices":[{"finish_reason":"length","message":{"content":""}}]}`, ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie}},
 		{"empty content", `{"model":"m","choices":[{"finish_reason":"stop","message":{"content":""}}]}`, ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie}},
 		{"out of list ID", `{"model":"m","choices":[{"finish_reason":"stop","message":{"content":"{\"status\":\"resolved\",\"media_type\":\"movie\",\"canonical_title\":\"X\",\"localized_titles\":[],\"year\":1996,\"season\":0,\"search_queries\":[],\"selected_tmdb_id\":9,\"episode_mappings\":[],\"confidence\":0.9,\"evidence_summary\":[]}"}}]}`, ai.Request{Task: ai.SelectCandidate, Kind: model.KindMovie, Candidates: []ai.Candidate{{ID: 7}}}},
 	}
@@ -100,6 +100,24 @@ func TestInvalidProviderOutputs(t *testing.T) {
 				t.Fatalf("err=%v requests=%d", err, ai.ProviderRequestsFromError(err))
 			}
 		})
+	}
+}
+
+func TestOutputLimitPreservesDiagnosticsWithoutRetry(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"model":"reasoning/free-model","choices":[{"finish_reason":"length","message":{"role":"assistant","content":""}}],"usage":{"completion_tokens":2048,"completion_tokens_details":{"reasoning_tokens":1987}}}`))
+	}))
+	defer server.Close()
+	client, _ := New(Config{BaseURL: server.URL, APIKey: "key", Model: "openrouter/free", ReasoningEffort: "minimal", MaxOutputTokens: 2048}, server.Client())
+	_, err := client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie})
+	var outputErr *ai.ProviderOutputError
+	if !errors.As(err, &outputErr) || !errors.Is(err, ai.ErrProviderOutput) {
+		t.Fatalf("typed error=%v", err)
+	}
+	if outputErr.ConfiguredModel != "openrouter/free" || outputErr.ActualModel != "reasoning/free-model" || outputErr.FinishReason != "length" || outputErr.CompletionTokens != 2048 || outputErr.ReasoningTokens != 1987 || ai.ProviderRequestsFromError(err) != 1 || calls.Load() != 1 {
+		t.Fatalf("diagnostics=%+v requests=%d calls=%d", outputErr, ai.ProviderRequestsFromError(err), calls.Load())
 	}
 }
 

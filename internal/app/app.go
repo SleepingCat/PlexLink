@@ -59,8 +59,11 @@ type ProcessOptions struct {
 type AIDiagnostics struct {
 	Used             bool       `json:"ai_used"`
 	Provider         string     `json:"provider,omitempty"`
-	Model            string     `json:"model,omitempty"`
+	Model            string     `json:"configured_model,omitempty"`
 	ActualModel      string     `json:"actual_model,omitempty"`
+	FinishReason     string     `json:"finish_reason,omitempty"`
+	CompletionTokens int        `json:"completion_tokens,omitempty"`
+	ReasoningTokens  int        `json:"reasoning_tokens,omitempty"`
 	PromptVersion    string     `json:"prompt_version,omitempty"`
 	WebSearchPolicy  string     `json:"web_search_policy,omitempty"`
 	WebSearchUsed    *bool      `json:"web_search_used,omitempty"`
@@ -357,6 +360,15 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 	resolved, err := p.AI.Resolve(ctx, req)
 	if err != nil {
 		result.AI.ProviderRequests += ai.ProviderRequestsFromError(err)
+		if diagnostics, ok := ai.ProviderOutputDiagnostics(err); ok {
+			if diagnostics.ConfiguredModel != "" {
+				result.AI.Model = diagnostics.ConfiguredModel
+			}
+			result.AI.ActualModel = diagnostics.ActualModel
+			result.AI.FinishReason = diagnostics.FinishReason
+			result.AI.CompletionTokens = diagnostics.CompletionTokens
+			result.AI.ReasoningTokens = diagnostics.ReasoningTokens
+		}
 		return ai.Result{}, false, err
 	}
 	result.AI.ProviderRequests += resolved.ProviderRequests

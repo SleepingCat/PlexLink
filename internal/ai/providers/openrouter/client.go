@@ -25,6 +25,7 @@ type Config struct {
 	BaseURL         string
 	APIKey          string
 	Model           string
+	ReasoningEffort string
 	MaxOutputTokens int
 }
 
@@ -39,6 +40,14 @@ func New(config Config, client *http.Client) (*Client, error) {
 	}
 	if config.MaxOutputTokens < 0 {
 		return nil, errors.New("OpenRouter max output tokens cannot be negative")
+	}
+	if config.ReasoningEffort == "" {
+		config.ReasoningEffort = "minimal"
+	}
+	switch config.ReasoningEffort {
+	case "none", "minimal", "low", "medium", "high":
+	default:
+		return nil, errors.New("OpenRouter reasoning effort must be none, minimal, low, medium, or high")
 	}
 	if client == nil {
 		client = &http.Client{Timeout: 45 * time.Second}
@@ -61,10 +70,15 @@ type request struct {
 	MaxTokens      int            `json:"max_tokens,omitempty"`
 	ResponseFormat map[string]any `json:"response_format"`
 	Provider       provider       `json:"provider"`
+	Reasoning      reasoning      `json:"reasoning"`
 }
 
 type provider struct {
 	RequireParameters bool `json:"require_parameters"`
+}
+
+type reasoning struct {
+	Effort string `json:"effort"`
 }
 
 type response struct {
@@ -73,6 +87,13 @@ type response struct {
 		FinishReason string  `json:"finish_reason"`
 		Message      message `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		CompletionTokens       int `json:"completion_tokens"`
+		ReasoningTokens        int `json:"reasoning_tokens"`
+		CompletionTokenDetails struct {
+			ReasoningTokens int `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
+	} `json:"usage"`
 }
 
 type HTTPError struct {
@@ -102,7 +123,8 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		ResponseFormat: map[string]any{"type": "json_schema", "json_schema": map[string]any{
 			"name": "plexlink_media_resolution", "strict": true, "schema": ai.ResultSchema(),
 		}},
-		Provider: provider{RequireParameters: true},
+		Provider:  provider{RequireParameters: true},
+		Reasoning: reasoning{Effort: c.config.ReasoningEffort},
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -118,7 +140,19 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 	}
 	choice := wire.Choices[0]
 	if choice.FinishReason == "length" {
-		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: OpenRouter output token limit reached", ai.ErrProviderOutput), attempts)
+		reasoningTokens := wire.Usage.CompletionTokenDetails.ReasoningTokens
+		if reasoningTokens == 0 {
+			reasoningTokens = wire.Usage.ReasoningTokens
+		}
+		outputErr := &ai.ProviderOutputError{
+			Err:              fmt.Errorf("%w: OpenRouter output token limit reached", ai.ErrProviderOutput),
+			ConfiguredModel:  c.config.Model,
+			ActualModel:      wire.Model,
+			FinishReason:     choice.FinishReason,
+			CompletionTokens: wire.Usage.CompletionTokens,
+			ReasoningTokens:  reasoningTokens,
+		}
+		return ai.Result{}, ai.WithProviderRequests(outputErr, attempts)
 	}
 	if strings.TrimSpace(choice.Message.Content) == "" {
 		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: OpenRouter returned empty message content", ai.ErrProviderOutput), attempts)

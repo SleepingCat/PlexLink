@@ -120,6 +120,26 @@ type ProviderRequestError struct {
 	Requests int
 }
 
+type ProviderOutputError struct {
+	Err              error
+	ConfiguredModel  string
+	ActualModel      string
+	FinishReason     string
+	CompletionTokens int
+	ReasoningTokens  int
+}
+
+func (e *ProviderOutputError) Error() string { return e.Err.Error() }
+func (e *ProviderOutputError) Unwrap() error { return e.Err }
+
+func ProviderOutputDiagnostics(err error) (ProviderOutputError, bool) {
+	var outputErr *ProviderOutputError
+	if !errors.As(err, &outputErr) {
+		return ProviderOutputError{}, false
+	}
+	return *outputErr, true
+}
+
 func (e *ProviderRequestError) Error() string { return e.Err.Error() }
 func (e *ProviderRequestError) Unwrap() error { return e.Err }
 

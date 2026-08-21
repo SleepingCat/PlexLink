@@ -251,7 +251,8 @@ func TestAIProviderErrorCreatesNoTarget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, name), []byte("video"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	resolver := &fakeAI{err: ai.WithProviderRequests(errors.New("provider unavailable"), 1)}
+	outputErr := &ai.ProviderOutputError{Err: fmt.Errorf("%w: output token limit reached", ai.ErrProviderOutput), ConfiguredModel: "openrouter/free", ActualModel: "reasoning/free-model", FinishReason: "length", CompletionTokens: 2048, ReasoningTokens: 1987}
+	resolver := &fakeAI{err: ai.WithProviderRequests(outputErr, 1)}
 	cfg := config.Config{AI: config.AI{Enabled: true, WebSearch: "allow", MinConfidence: .9}, Paths: config.Paths{TVSource: filepath.Join(root, "tv"), MovieSource: source, AnimeSource: filepath.Join(root, "anime"), MovieTarget: target}, Matching: config.Matching{MinScore: 80, MinMargin: 15}, State: config.State{Directory: filepath.Join(root, "state")}}
 	p := Processor{Torrents: torrents{t: model.Torrent{Name: name, ContentPath: filepath.Join(source, name), SavePath: source, Progress: 1}, f: []model.TorrentFile{{Name: name, Priority: 1, Progress: 1}}}, Metadata: ottoMetadata{}, AI: resolver, Config: cfg}
 	result, err := p.Process(context.Background(), "unknown", false, 0)
@@ -260,6 +261,9 @@ func TestAIProviderErrorCreatesNoTarget(t *testing.T) {
 	}
 	if result.AI.ProviderRequests != 1 {
 		t.Fatalf("failed provider request was not counted: %+v", result.AI)
+	}
+	if result.AI.Model != "openrouter/free" || result.AI.ActualModel != "reasoning/free-model" || result.AI.FinishReason != "length" || result.AI.CompletionTokens != 2048 || result.AI.ReasoningTokens != 1987 {
+		t.Fatalf("provider output diagnostics were not retained: %+v", result.AI)
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
 		t.Fatal("provider error created target")

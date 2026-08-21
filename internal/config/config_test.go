@@ -106,11 +106,24 @@ func TestOpenRouterDefaultsAndEnvironmentKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AI.Provider != "openrouter" || cfg.AI.WebSearch != "never" || cfg.AI.MaxOutputTokens != 2048 || cfg.AI.OpenRouter.BaseURL != "https://openrouter.ai/api/v1" || cfg.AI.OpenRouter.Model != "openrouter/free" {
+	if cfg.AI.Provider != "openrouter" || cfg.AI.WebSearch != "never" || cfg.AI.MaxOutputTokens != 2048 || cfg.AI.OpenRouter.BaseURL != "https://openrouter.ai/api/v1" || cfg.AI.OpenRouter.Model != "openrouter/free" || cfg.AI.OpenRouter.ReasoningEffort != "minimal" {
 		t.Fatalf("AI defaults=%+v", cfg.AI)
 	}
 	if key, err := cfg.AIKey(); err != nil || key != "openrouter-key" {
 		t.Fatalf("key=%q err=%v", key, err)
+	}
+}
+
+func TestOpenRouterReasoningEffortValidation(t *testing.T) {
+	c := Config{QBittorrent: QBittorrent{URL: "http://qbt", Username: "user", Password: "secret"}, TMDB: TMDB{Token: "token"}, AI: AI{Provider: "openrouter", WebSearch: "never", MinConfidence: .9, Timeout: "45s", MaxOutputTokens: 2048, OpenRouter: OpenRouter{ReasoningEffort: "extreme"}}, Paths: Paths{TVSource: "tv", MovieSource: "movies", AnimeSource: "anime", TVTarget: "ptv", MovieTarget: "pmovies", AnimeTarget: "panime"}, Matching: Matching{MinScore: 80, MinMargin: 15}, State: State{Directory: "state"}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("invalid OpenRouter reasoning effort accepted")
+	}
+	for _, effort := range []string{"none", "minimal", "low", "medium", "high"} {
+		c.AI.OpenRouter.ReasoningEffort = effort
+		if err := c.Validate(); err != nil {
+			t.Fatalf("effort %q rejected: %v", effort, err)
+		}
 	}
 }
 
