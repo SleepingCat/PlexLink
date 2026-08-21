@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -270,6 +271,20 @@ func TestAIProviderErrorCreatesNoTarget(t *testing.T) {
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
 		t.Fatal("provider error created target")
+	}
+}
+
+func TestAIHTTPErrorPreservesSafeMetadata(t *testing.T) {
+	providerErr := &ai.ProviderHTTPError{Provider: "openrouter", StatusCode: 429, ErrorCode: "rate_limit", RetryAfterSeconds: 12, Message: "request limited"}
+	p := Processor{AI: &fakeAI{err: ai.WithProviderRequests(providerErr, 1)}, AIProvider: "openrouter", AIModel: "openrouter/free", Config: config.Config{State: config.State{Directory: t.TempDir()}}}
+	result := Result{}
+	_, _, err := p.callAI(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie}, &result)
+	if err == nil || result.AI.HTTPStatus != 429 || result.AI.ProviderErrorCode != "rate_limit" || result.AI.RetryAfterSeconds != 12 || result.AI.Provider != "openrouter" {
+		t.Fatalf("diagnostics=%+v err=%v", result.AI, err)
+	}
+	wire, marshalErr := json.Marshal(result)
+	if marshalErr != nil || strings.Contains(string(wire), "Authorization") || strings.Contains(string(wire), "secret") {
+		t.Fatalf("unsafe diagnostics=%s err=%v", wire, marshalErr)
 	}
 }
 

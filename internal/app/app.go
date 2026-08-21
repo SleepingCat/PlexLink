@@ -65,22 +65,32 @@ type ProcessOptions struct {
 type dryRunContextKey struct{}
 
 type AIDiagnostics struct {
-	Used             bool       `json:"ai_used"`
-	Provider         string     `json:"provider,omitempty"`
-	Model            string     `json:"configured_model,omitempty"`
-	ActualModel      string     `json:"actual_model,omitempty"`
-	FinishReason     string     `json:"finish_reason,omitempty"`
-	CompletionTokens int        `json:"completion_tokens,omitempty"`
-	ReasoningTokens  int        `json:"reasoning_tokens,omitempty"`
-	PromptVersion    string     `json:"prompt_version,omitempty"`
-	WebSearchPolicy  string     `json:"web_search_policy,omitempty"`
-	WebSearchUsed    *bool      `json:"web_search_used,omitempty"`
-	CacheHit         bool       `json:"cache_hit"`
-	Calls            int        `json:"calls"`
-	ProviderRequests int        `json:"provider_requests"`
-	Hypothesis       *ai.Result `json:"hypothesis,omitempty"`
-	Verified         bool       `json:"final_tmdb_verified"`
-	Error            string     `json:"error,omitempty"`
+	Used              bool       `json:"ai_used"`
+	Provider          string     `json:"provider,omitempty"`
+	Model             string     `json:"configured_model,omitempty"`
+	ActualModel       string     `json:"actual_model,omitempty"`
+	FinishReason      string     `json:"finish_reason,omitempty"`
+	CompletionTokens  int        `json:"completion_tokens,omitempty"`
+	ReasoningTokens   int        `json:"reasoning_tokens,omitempty"`
+	PromptVersion     string     `json:"prompt_version,omitempty"`
+	WebSearchPolicy   string     `json:"web_search_policy,omitempty"`
+	WebSearchUsed     *bool      `json:"web_search_used,omitempty"`
+	CacheHit          bool       `json:"cache_hit"`
+	Calls             int        `json:"calls"`
+	ProviderRequests  int        `json:"provider_requests"`
+	HTTPStatus        int        `json:"http_status,omitempty"`
+	ProviderErrorCode string     `json:"provider_error_code,omitempty"`
+	RetryAfterSeconds int        `json:"retry_after_seconds,omitempty"`
+	Hypothesis        *ai.Result `json:"hypothesis,omitempty"`
+	Verified          bool       `json:"-"`
+	Error             string     `json:"error,omitempty"`
+}
+
+type ResolutionDiagnostics struct {
+	FinalTMDBVerified       bool   `json:"final_tmdb_verified"`
+	ResolutionSchemaVersion string `json:"resolution_schema_version"`
+	ScoringVersion          string `json:"scoring_version"`
+	EpisodeMappingVersion   string `json:"episode_mapping_version"`
 }
 type Result struct {
 	Torrent                model.Torrent             `json:"torrent"`
@@ -94,6 +104,7 @@ type Result struct {
 	Actions                []linker.Action           `json:"actions"`
 	AI                     AIDiagnostics             `json:"ai"`
 	Ensemble               EnsembleDiagnostics       `json:"ensemble"`
+	Resolution             ResolutionDiagnostics     `json:"resolution"`
 	ReconciliationWarnings []string                  `json:"reconciliation_warnings,omitempty"`
 }
 
@@ -104,7 +115,7 @@ type EnsembleDiagnostics struct {
 	FirstPass         *ensemble.Decision        `json:"first_pass,omitempty"`
 	SecondPassUsed    bool                      `json:"second_pass_used"`
 	FinalDecision     *ensemble.Decision        `json:"final_decision,omitempty"`
-	FinalTMDBVerified bool                      `json:"final_tmdb_verified"`
+	FinalTMDBVerified bool                      `json:"-"`
 }
 
 func (p *Processor) Process(ctx context.Context, hash string, dry bool, manualID int) (Result, error) {
@@ -138,7 +149,7 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrTorrent, err)
 	}
-	r := Result{Torrent: t}
+	r := Result{Torrent: t, Resolution: ResolutionDiagnostics{ResolutionSchemaVersion: state.ResolutionSchemaVersion, ScoringVersion: state.ScoringVersion, EpisodeMappingVersion: state.EpisodeMappingVersion}}
 	if cachedResolution {
 		r.Ensemble.CachedResolution = true
 		r.AI.ActualModel = cached.ActualAIModel
@@ -184,6 +195,7 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 		}
 		return r, err
 	}
+	r.Resolution.FinalTMDBVerified = true
 	r.Match = match
 	if kind == model.KindAnime {
 		if err := matcher.MapAnimeAbsolute(show, media); err != nil {
@@ -620,6 +632,14 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 	resolved, err := p.AI.Resolve(ctx, req)
 	if err != nil {
 		result.AI.ProviderRequests += ai.ProviderRequestsFromError(err)
+		if diagnostics, ok := ai.ProviderHTTPDiagnostics(err); ok {
+			result.AI.HTTPStatus = diagnostics.StatusCode
+			result.AI.ProviderErrorCode = diagnostics.ErrorCode
+			result.AI.RetryAfterSeconds = diagnostics.RetryAfterSeconds
+			if diagnostics.Provider != "" {
+				result.AI.Provider = diagnostics.Provider
+			}
+		}
 		if diagnostics, ok := ai.ProviderOutputDiagnostics(err); ok {
 			if diagnostics.ConfiguredModel != "" {
 				result.AI.Model = diagnostics.ConfiguredModel

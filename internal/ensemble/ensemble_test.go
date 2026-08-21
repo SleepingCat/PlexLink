@@ -165,8 +165,67 @@ func TestCatalogNormalizationDoesNotAddIdentityFamilyOrConflict(t *testing.T) {
 		if candidate.FamilyScores[FamilyExternalIdentity] != 0 || candidate.IdentityAnchors != 0 || len(candidate.HardConflicts) != 0 {
 			t.Fatalf("catalog bridge affected scoring: %+v", candidate)
 		}
-		if candidate.AgreementScore != 50 {
+		if candidate.AgreementScore != 0 {
 			t.Fatalf("agreement=%d candidate=%+v", candidate.AgreementScore, candidate)
+		}
+	}
+}
+
+func TestFunnyGamesRegressionScoresWithoutCatalogIdentityInflation(t *testing.T) {
+	results := []ResolverResult{
+		result(8461, ev(FamilyTitle, EvidenceTitleExactLocalized, "tmdb", PointsTitleExactLocalized), ev(FamilyTime, EvidenceYearReleaseDateExact, "tmdb", PointsYearReleaseDateExact)),
+		result(8461, ev(FamilyTitle, EvidenceTitleExactLocalized, "kinopoisk", PointsTitleExactLocalized), ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "kinopoisk", 0)),
+		result(10234, ev(FamilyTitle, EvidenceTitleExactLocalized, "tmdb", PointsTitleExactLocalized), ev(FamilyTime, EvidenceYearClearMismatch, "tmdb", PointsYearClearMismatch)),
+		result(10234, ev(FamilyTitle, EvidenceTitleExactLocalized, "kinopoisk", PointsTitleExactLocalized), ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "kinopoisk", 0)),
+		result(284908, ev(FamilyTitle, EvidenceTitleFuzzyWeak, "tmdb", PointsTitleFuzzyWeak), ev(FamilyTime, EvidenceYearClearMismatch, "tmdb", PointsYearClearMismatch)),
+		result(284908, ev(FamilyTitle, EvidenceTitleFuzzyWeak, "kinopoisk", PointsTitleFuzzyWeak), ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "kinopoisk", 0)),
+	}
+	d := Aggregate(results)
+	if d.Type != DecisionMatch || d.Candidates[0].TMDBID != 8461 || d.Candidates[0].TotalScore != 550 || d.Margin != 450 {
+		t.Fatalf("decision=%+v", d)
+	}
+	want := map[int]int{8461: 550, 10234: 100, 284908: -180}
+	for _, candidate := range d.Candidates {
+		if candidate.TotalScore != want[candidate.TMDBID] || candidate.FamilyScores[FamilyExternalIdentity] != 0 {
+			t.Fatalf("candidate=%+v", candidate)
+		}
+	}
+}
+
+func TestAgreementRequiresPositiveNonBridgeEvidence(t *testing.T) {
+	bridge := func(name string) ResolverResult {
+		return result(1, ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, name, 0))
+	}
+	tests := []struct {
+		name string
+		in   []ResolverResult
+		want int
+	}{
+		{"bridges only", []ResolverResult{bridge("tmdb"), bridge("kinopoisk")}, 0},
+		{"one title and one bridge", []ResolverResult{result(1, ev(FamilyTitle, EvidenceTitleExactCanonical, "tmdb", 300)), bridge("kinopoisk")}, 0},
+		{"two supporting catalogs", []ResolverResult{result(1, ev(FamilyTitle, EvidenceTitleExactCanonical, "tmdb", 300)), result(1, ev(FamilyTime, EvidenceYearPrimaryExact, "kinopoisk", 180))}, 50},
+		{"three supporting catalogs", []ResolverResult{result(1, ev(FamilyTitle, EvidenceTitleExactCanonical, "tmdb", 300)), result(1, ev(FamilyTime, EvidenceYearPrimaryExact, "kinopoisk", 180)), result(1, ev(FamilyTitle, EvidenceTitleExactAKA, "tvmaze", 280))}, 100},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := top(t, Aggregate(test.in)).AgreementScore; got != test.want {
+				t.Fatalf("agreement=%d want=%d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestIndependentContradictorySourceAnchorsCreateHardConflict(t *testing.T) {
+	d := Aggregate([]ResolverResult{
+		result(1, ev(FamilyFileIdentity, EvidenceOpenSubtitlesHashExact, "source-hash", PointsOpenSubtitlesHashExact)),
+		result(2, ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "source-metadata", PointsExternalTMDBExact)),
+	})
+	if d.Type != DecisionConflict || len(d.Candidates) != 2 {
+		t.Fatalf("decision=%+v", d)
+	}
+	for _, candidate := range d.Candidates {
+		if len(candidate.HardConflicts) != 1 || candidate.HardConflicts[0].Type != EvidenceExternalIdentityConflict {
+			t.Fatalf("candidate=%+v", candidate)
 		}
 	}
 }

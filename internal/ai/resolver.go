@@ -129,6 +129,29 @@ type ProviderOutputError struct {
 	ReasoningTokens  int
 }
 
+type ProviderHTTPError struct {
+	Provider          string
+	StatusCode        int
+	ErrorCode         string
+	RetryAfterSeconds int
+	Message           string
+}
+
+func (e *ProviderHTTPError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("%s API status %d", e.Provider, e.StatusCode)
+	}
+	return fmt.Sprintf("%s API status %d: %s", e.Provider, e.StatusCode, e.Message)
+}
+
+func ProviderHTTPDiagnostics(err error) (ProviderHTTPError, bool) {
+	var httpErr *ProviderHTTPError
+	if !errors.As(err, &httpErr) {
+		return ProviderHTTPError{}, false
+	}
+	return *httpErr, true
+}
+
 func (e *ProviderOutputError) Error() string { return e.Err.Error() }
 func (e *ProviderOutputError) Unwrap() error { return e.Err }
 

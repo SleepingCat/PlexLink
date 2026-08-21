@@ -18,7 +18,7 @@ import (
 const (
 	maxResponseBytes = 2 << 20
 	maxErrorBytes    = 1024
-	maxAttempts      = 3
+	maxAttempts      = 2
 )
 
 type Config struct {
@@ -96,17 +96,7 @@ type response struct {
 	} `json:"usage"`
 }
 
-type HTTPError struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *HTTPError) Error() string {
-	if e.Body == "" {
-		return fmt.Sprintf("OpenRouter API status %d", e.StatusCode)
-	}
-	return fmt.Sprintf("OpenRouter API status %d: %s", e.StatusCode, e.Body)
-}
+type HTTPError = ai.ProviderHTTPError
 
 func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error) {
 	if req.WebSearch == ai.WebRequire {
@@ -121,7 +111,7 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		Messages:  []message{{Role: "system", Content: ai.SystemPrompt(req.Task, req.WebSearch)}, {Role: "user", Content: string(evidence)}},
 		MaxTokens: c.config.MaxOutputTokens,
 		ResponseFormat: map[string]any{"type": "json_schema", "json_schema": map[string]any{
-			"name": "plexlink_media_resolution", "strict": true, "schema": ai.ResultSchema(),
+			"name": "plexlink_media_resolution", "strict": true, "schema": ai.CompactResultSchema(req.Task),
 		}},
 		Provider:  provider{RequireParameters: true},
 		Reasoning: reasoning{Effort: c.config.ReasoningEffort},
@@ -131,12 +121,30 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		return ai.Result{}, fmt.Errorf("encode OpenRouter request: %w", err)
 	}
 
-	wire, attempts, err := c.call(ctx, payload)
-	if err != nil {
-		return ai.Result{}, ai.WithProviderRequests(err, attempts)
+	requests := 0
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		wire, err := c.call(ctx, payload)
+		requests++
+		if err != nil {
+			return ai.Result{}, ai.WithProviderRequests(err, requests)
+		}
+		result, retryable, err := c.decode(req, wire)
+		if err == nil {
+			result.ProviderRequests = requests
+			return result, nil
+		}
+		lastErr = err
+		if !retryable {
+			break
+		}
 	}
+	return ai.Result{}, ai.WithProviderRequests(lastErr, requests)
+}
+
+func (c *Client) decode(req ai.Request, wire response) (ai.Result, bool, error) {
 	if len(wire.Choices) == 0 {
-		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: OpenRouter returned no choices", ai.ErrProviderOutput), attempts)
+		return ai.Result{}, true, fmt.Errorf("%w: OpenRouter returned no choices", ai.ErrProviderOutput)
 	}
 	choice := wire.Choices[0]
 	if choice.FinishReason == "length" {
@@ -144,69 +152,63 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		if reasoningTokens == 0 {
 			reasoningTokens = wire.Usage.ReasoningTokens
 		}
-		outputErr := &ai.ProviderOutputError{
-			Err:              fmt.Errorf("%w: OpenRouter output token limit reached", ai.ErrProviderOutput),
-			ConfiguredModel:  c.config.Model,
-			ActualModel:      wire.Model,
-			FinishReason:     choice.FinishReason,
-			CompletionTokens: wire.Usage.CompletionTokens,
-			ReasoningTokens:  reasoningTokens,
-		}
-		return ai.Result{}, ai.WithProviderRequests(outputErr, attempts)
+		return ai.Result{}, true, &ai.ProviderOutputError{Err: fmt.Errorf("%w: OpenRouter output token limit reached", ai.ErrProviderOutput), ConfiguredModel: c.config.Model, ActualModel: wire.Model, FinishReason: choice.FinishReason, CompletionTokens: wire.Usage.CompletionTokens, ReasoningTokens: reasoningTokens}
 	}
 	if strings.TrimSpace(choice.Message.Content) == "" {
-		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: OpenRouter returned empty message content", ai.ErrProviderOutput), attempts)
+		return ai.Result{}, true, fmt.Errorf("%w: OpenRouter returned empty message content", ai.ErrProviderOutput)
 	}
 	var result ai.Result
 	if err := json.Unmarshal([]byte(choice.Message.Content), &result); err != nil {
-		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: decode OpenRouter structured output: %v", ai.ErrProviderOutput, err), attempts)
+		return ai.Result{}, true, fmt.Errorf("%w: decode OpenRouter structured output: %v", ai.ErrProviderOutput, err)
 	}
+	result.MediaType = req.Kind
 	webUsed := false
 	result.WebSearchUsed = &webUsed
-	result.ProviderRequests = attempts
 	result.ActualModel = wire.Model
 	if err := ai.Validate(req, result); err != nil {
-		return ai.Result{}, ai.WithProviderRequests(err, attempts)
+		return ai.Result{}, true, err
 	}
-	return result, nil
+	return result, false, nil
 }
 
-func (c *Client) call(ctx context.Context, payload []byte) (response, int, error) {
-	attempts := 0
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		r, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.config.BaseURL, "/")+"/chat/completions", bytes.NewReader(payload))
-		if err != nil {
-			return response{}, attempts, fmt.Errorf("create OpenRouter request: %w", err)
-		}
-		r.Header.Set("Authorization", "Bearer "+c.config.APIKey)
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Accept", "application/json")
-		attempts++
-		resp, err := c.http.Do(r)
-		if err != nil {
-			return response{}, attempts, fmt.Errorf("OpenRouter request: %w", err)
-		}
-		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
-		resp.Body.Close()
-		if readErr != nil {
-			return response{}, attempts, fmt.Errorf("read OpenRouter response: %w", readErr)
-		}
-		if transient(resp.StatusCode) && attempt+1 < maxAttempts {
-			if err := wait(ctx, retryDelay(resp, attempt)); err != nil {
-				return response{}, attempts, err
-			}
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return response{}, attempts, &HTTPError{StatusCode: resp.StatusCode, Body: c.safeError(raw)}
-		}
-		var wire response
-		if err := json.Unmarshal(raw, &wire); err != nil {
-			return response{}, attempts, fmt.Errorf("%w: decode OpenRouter response: %v", ai.ErrProviderOutput, err)
-		}
-		return wire, attempts, nil
+func (c *Client) call(ctx context.Context, payload []byte) (response, error) {
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.config.BaseURL, "/")+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return response{}, fmt.Errorf("create OpenRouter request: %w", err)
 	}
-	return response{}, attempts, errors.New("OpenRouter request exhausted retries")
+	r.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json")
+	resp, err := c.http.Do(r)
+	if err != nil {
+		return response{}, fmt.Errorf("OpenRouter request: %w", err)
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	resp.Body.Close()
+	if readErr != nil {
+		return response{}, fmt.Errorf("read OpenRouter response: %w", readErr)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return response{}, &HTTPError{Provider: "openrouter", StatusCode: resp.StatusCode, ErrorCode: providerErrorCode(raw), RetryAfterSeconds: retryAfter, Message: c.safeError(raw)}
+	}
+	var wire response
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return response{}, fmt.Errorf("%w: decode OpenRouter response: %v", ai.ErrProviderOutput, err)
+	}
+	return wire, nil
+}
+
+func providerErrorCode(raw []byte) string {
+	var envelope struct {
+		Error struct {
+			Code any `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil || envelope.Error.Code == nil {
+		return ""
+	}
+	return fmt.Sprint(envelope.Error.Code)
 }
 
 func (c *Client) safeError(raw []byte) string {
@@ -216,26 +218,4 @@ func (c *Client) safeError(raw []byte) string {
 		message = message[:maxErrorBytes]
 	}
 	return message
-}
-
-func transient(status int) bool {
-	return status == http.StatusTooManyRequests || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
-}
-
-func retryDelay(resp *http.Response, attempt int) time.Duration {
-	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds >= 0 {
-		return time.Duration(seconds) * time.Second
-	}
-	return time.Duration(1<<attempt) * 200 * time.Millisecond
-}
-
-func wait(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

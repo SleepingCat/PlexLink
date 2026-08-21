@@ -13,6 +13,7 @@ import (
 	"github.com/SleepingCat/PlexLink/internal/config"
 	"github.com/SleepingCat/PlexLink/internal/ensemble"
 	"github.com/SleepingCat/PlexLink/internal/model"
+	"github.com/SleepingCat/PlexLink/internal/state"
 )
 
 type ensembleMetadata struct{}
@@ -22,6 +23,16 @@ func (ensembleMetadata) SearchMovie(_ context.Context, query string) ([]model.Mo
 		return []model.MovieCandidate{{ID: 8973, Title: "Sling Blade", OriginalTitle: "Sling Blade", ReleaseDate: "1996-08-30"}}, nil
 	}
 	return nil, nil
+}
+
+type unavailableMetadata struct{ ensembleMetadata }
+
+func (unavailableMetadata) GetMovie(context.Context, int) (model.Movie, error) {
+	return model.Movie{}, errors.New("tmdb unavailable")
+}
+
+func (unavailableMetadata) GetTV(context.Context, int) (model.TVShow, error) {
+	return model.TVShow{}, errors.New("tmdb unavailable")
 }
 func (ensembleMetadata) GetMovie(_ context.Context, id int) (model.Movie, error) {
 	if id == 8973 {
@@ -174,5 +185,23 @@ func TestVerifiedStateBypassesEnsembleAndAI(t *testing.T) {
 	second, err := p.Process(context.Background(), "cache-hash", false, 0)
 	if err != nil || !second.Ensemble.CachedResolution || resolver.calls.Load() != firstCalls || aiResolver.calls != 0 {
 		t.Fatalf("cached=%v resolver=%d/%d ai=%d err=%v", second.Ensemble.CachedResolution, resolver.calls.Load(), firstCalls, aiResolver.calls, err)
+	}
+}
+
+func TestTMDBOutageRequiresCompatibleVerifiedStateForCanonicalIdentity(t *testing.T) {
+	resolver := &orchestrationResolver{name: "tmdb", resolve: func(ensemble.ResolveRequest) ensemble.ResolverResult {
+		return evidenceResult("tmdb", 8973,
+			ensemble.Evidence{Family: ensemble.FamilyTitle, Type: ensemble.EvidenceTitleExactCanonical, Source: "tmdb", Points: ensemble.PointsTitleExactCanonical},
+			ensemble.Evidence{Family: ensemble.FamilyTime, Type: ensemble.EvidenceYearReleaseDateExact, Source: "tmdb", Points: ensemble.PointsYearReleaseDateExact})
+	}}
+	p := Processor{Metadata: unavailableMetadata{}, Resolvers: []ensemble.Resolver{resolver}, Config: config.Config{Resolvers: config.Resolvers{Timeout: "1s"}}}
+	_, _, err := p.resolveEnsemble(context.Background(), model.KindMovie, "Sling Blade", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "Sling Blade"}}, Year: 1996}, false, &Result{})
+	if !errors.Is(err, ErrUnresolved) {
+		t.Fatalf("fresh unverified identity err=%v", err)
+	}
+
+	match, _, err := p.resolveCached(context.Background(), model.KindMovie, state.VerifiedResolution{TMDBID: 8973, Kind: "movie", Title: "Sling Blade", Year: 1996})
+	if err != nil || match.ID != 8973 || match.Name != "Sling Blade" {
+		t.Fatalf("cached match=%+v err=%v", match, err)
 	}
 }

@@ -11,13 +11,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	ResolutionSchemaVersion = "1"
+	ScoringVersion          = "2"
+	EpisodeMappingVersion   = "1"
+)
+
 type VerifiedResolution struct {
-	TMDBID        int                            `json:"tmdb_id"`
-	Kind          string                         `json:"kind"`
-	Title         string                         `json:"title"`
-	Year          int                            `json:"year"`
-	ActualAIModel string                         `json:"actual_ai_model,omitempty"`
-	Files         map[string]VerifiedFileMapping `json:"files,omitempty"`
+	ResolutionSchemaVersion string                         `json:"resolution_schema_version"`
+	ScoringVersion          string                         `json:"scoring_version"`
+	EpisodeMappingVersion   string                         `json:"episode_mapping_version"`
+	TMDBID                  int                            `json:"tmdb_id"`
+	Kind                    string                         `json:"kind"`
+	Title                   string                         `json:"title"`
+	Year                    int                            `json:"year"`
+	ActualAIModel           string                         `json:"actual_ai_model,omitempty"`
+	Files                   map[string]VerifiedFileMapping `json:"files,omitempty"`
 }
 
 type VerifiedFileMapping struct {
@@ -42,6 +51,9 @@ func Verified(directory, hash string) (VerifiedResolution, bool, error) {
 	if result.TMDBID <= 0 {
 		return VerifiedResolution{}, false, fmt.Errorf("parse verified resolution: invalid TMDB ID")
 	}
+	if !compatible(result) {
+		return VerifiedResolution{}, false, nil
+	}
 	return result, true, nil
 }
 
@@ -49,6 +61,9 @@ func SaveVerified(directory, hash string, resolution VerifiedResolution) error {
 	if resolution.TMDBID <= 0 {
 		return errors.New("verified resolution requires a TMDB ID")
 	}
+	resolution.ResolutionSchemaVersion = ResolutionSchemaVersion
+	resolution.ScoringVersion = ScoringVersion
+	resolution.EpisodeMappingVersion = EpisodeMappingVersion
 	dir := filepath.Join(directory, "verified-resolutions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -58,6 +73,12 @@ func SaveVerified(directory, hash string, resolution VerifiedResolution) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, strings.ToLower(hash)+".json"), b, 0o600)
+}
+
+func compatible(resolution VerifiedResolution) bool {
+	return resolution.ResolutionSchemaVersion == ResolutionSchemaVersion &&
+		resolution.ScoringVersion == ScoringVersion &&
+		resolution.EpisodeMappingVersion == EpisodeMappingVersion
 }
 
 type resolutions struct {

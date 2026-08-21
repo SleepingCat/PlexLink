@@ -14,6 +14,7 @@ import (
 	"github.com/SleepingCat/PlexLink/internal/ensemble"
 	"github.com/SleepingCat/PlexLink/internal/linker"
 	"github.com/SleepingCat/PlexLink/internal/model"
+	"github.com/SleepingCat/PlexLink/internal/state"
 )
 
 type freshEpisodeMetadata struct{ episodeCount int }
@@ -93,6 +94,28 @@ func TestUnknownFileDoesNotBlockResolvedSiblings(t *testing.T) {
 	}
 	if result.EpisodeValidation[11].State != model.EpisodeUnresolved {
 		t.Fatalf("mapping=%+v", result.EpisodeValidation[11])
+	}
+}
+
+type partialEnrichmentMetadata struct{ freshEpisodeMetadata }
+
+func (m partialEnrichmentMetadata) GetSeason(ctx context.Context, id, season int) (model.Season, error) {
+	if season == 3 {
+		return model.Season{}, errors.New("provider unavailable")
+	}
+	return m.freshEpisodeMetadata.GetSeason(ctx, id, season)
+}
+
+func TestFailedSeasonEnrichmentDoesNotDowngradeResolvedSiblings(t *testing.T) {
+	p := Processor{Metadata: partialEnrichmentMetadata{freshEpisodeMetadata{episodeCount: 2}}}
+	files := []model.MediaFile{
+		{Name: "Fresh.Show.S02E01.mkv", Ref: model.EpisodeRef{Season: 2, Episode: 1}},
+		{Name: "Fresh.Show.S02E02.mkv", Ref: model.EpisodeRef{Season: 2, Episode: 2}},
+		{Name: "Fresh.Show.S03E01.mkv", Ref: model.EpisodeRef{Season: 3, Episode: 1}},
+	}
+	validations, valid := p.validateEpisodesForKind(context.Background(), model.KindTV, 7, files)
+	if valid || validations[0].State != model.EpisodeResolved || validations[1].State != model.EpisodeResolved || validations[2].State != model.EpisodeUnresolved {
+		t.Fatalf("valid=%v mappings=%+v", valid, validations)
 	}
 }
 
@@ -208,6 +231,9 @@ func TestInspectDiagnosticsAreDeterministicAndExplainDecisionAndMappings(t *test
 	}
 	if string(first) != string(second) {
 		t.Fatal("inspect JSON is not deterministic")
+	}
+	if strings.Count(string(first), `"final_tmdb_verified"`) != 1 || !strings.Contains(string(first), `"resolution_schema_version":"`+state.ResolutionSchemaVersion+`"`) || !strings.Contains(string(first), `"scoring_version":"`+state.ScoringVersion+`"`) || !strings.Contains(string(first), `"episode_mapping_version":"`+state.EpisodeMappingVersion+`"`) {
+		t.Fatalf("resolution diagnostics are missing or contradictory: %s", first)
 	}
 	for _, field := range []string{"resolver_results", "candidates", "evidence", "family_subtotals", "total_score", "margin", "hard_conflicts", "episode_validation", "PROVISIONAL", "RESOLVED_WITH_WARNINGS"} {
 		if !strings.Contains(string(first), field) {

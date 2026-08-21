@@ -51,6 +51,12 @@ func TestRequestWireFormatAndResponse(t *testing.T) {
 	if format["type"] != "json_schema" || schema["strict"] != true || schema["schema"] == nil || provider["require_parameters"] != true || reasoning["effort"] != "minimal" || len(messages) != 2 {
 		t.Fatalf("structured request=%+v", got)
 	}
+	properties := schema["schema"].(map[string]any)["properties"].(map[string]any)
+	for _, unrelated := range []string{"selected_tmdb_id", "episode_mappings", "evidence_summary", "season", "media_type"} {
+		if properties[unrelated] != nil {
+			t.Fatalf("identify_media schema contains unrelated field %q: %+v", unrelated, properties)
+		}
+	}
 	for _, forbidden := range []string{"input", "tools", "generation_config", "store"} {
 		if got[forbidden] != nil {
 			t.Fatalf("provider-specific field %q leaked", forbidden)
@@ -96,14 +102,14 @@ func TestInvalidProviderOutputs(t *testing.T) {
 			defer server.Close()
 			client, _ := New(Config{BaseURL: server.URL, APIKey: "key", Model: "model"}, server.Client())
 			_, err := client.Resolve(context.Background(), tt.req)
-			if err == nil || ai.ProviderRequestsFromError(err) != 1 {
+			if err == nil || ai.ProviderRequestsFromError(err) != 2 {
 				t.Fatalf("err=%v requests=%d", err, ai.ProviderRequestsFromError(err))
 			}
 		})
 	}
 }
 
-func TestOutputLimitPreservesDiagnosticsWithoutRetry(t *testing.T) {
+func TestOutputLimitRetriesOnceAndPreservesDiagnostics(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -116,7 +122,7 @@ func TestOutputLimitPreservesDiagnosticsWithoutRetry(t *testing.T) {
 	if !errors.As(err, &outputErr) || !errors.Is(err, ai.ErrProviderOutput) {
 		t.Fatalf("typed error=%v", err)
 	}
-	if outputErr.ConfiguredModel != "openrouter/free" || outputErr.ActualModel != "reasoning/free-model" || outputErr.FinishReason != "length" || outputErr.CompletionTokens != 2048 || outputErr.ReasoningTokens != 1987 || ai.ProviderRequestsFromError(err) != 1 || calls.Load() != 1 {
+	if outputErr.ConfiguredModel != "openrouter/free" || outputErr.ActualModel != "reasoning/free-model" || outputErr.FinishReason != "length" || outputErr.CompletionTokens != 2048 || outputErr.ReasoningTokens != 1987 || ai.ProviderRequestsFromError(err) != 2 || calls.Load() != 2 {
 		t.Fatalf("diagnostics=%+v requests=%d calls=%d", outputErr, ai.ProviderRequestsFromError(err), calls.Load())
 	}
 }
@@ -135,35 +141,44 @@ func TestHTTPErrorRetryCountingAndRedaction(t *testing.T) {
 		})
 	}
 
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		call := calls.Add(1)
-		if call < 3 {
-			w.Header().Set("Retry-After", "0")
-			http.Error(w, "busy", http.StatusTooManyRequests)
-			return
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable} {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			http.Error(w, "unavailable", status)
+		}))
+		client, _ := New(Config{BaseURL: server.URL, APIKey: "key", Model: "model"}, server.Client())
+		_, err := client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie})
+		server.Close()
+		var providerErr *HTTPError
+		if !errors.As(err, &providerErr) || providerErr.StatusCode != status || calls.Load() != 1 || ai.ProviderRequestsFromError(err) != 1 {
+			t.Fatalf("status=%d calls=%d err=%v", status, calls.Load(), err)
 		}
-		writeResponse(t, w, "model", "stop", validMovie)
-	}))
-	defer server.Close()
-	client, _ := New(Config{BaseURL: server.URL, APIKey: "key", Model: "model"}, server.Client())
-	result, err := client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie})
-	if err != nil || result.ProviderRequests != 3 || calls.Load() != 3 {
-		t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
 	}
+}
 
-	var unavailableCalls atomic.Int32
-	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		unavailableCalls.Add(1)
-		w.Header().Set("Retry-After", "0")
-		http.Error(w, "unavailable", http.StatusServiceUnavailable)
-	}))
-	defer unavailable.Close()
-	client, _ = New(Config{BaseURL: unavailable.URL, APIKey: "key", Model: "model"}, unavailable.Client())
-	_, err = client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie})
-	var providerErr *HTTPError
-	if !errors.As(err, &providerErr) || providerErr.StatusCode != http.StatusServiceUnavailable || unavailableCalls.Load() != 3 || ai.ProviderRequestsFromError(err) != 3 {
-		t.Fatalf("calls=%d err=%v", unavailableCalls.Load(), err)
+func TestUnusableOutputRetriesOnceThenSucceeds(t *testing.T) {
+	for _, first := range []string{"length", "invalid"} {
+		t.Run(first, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if calls.Add(1) == 1 {
+					if first == "length" {
+						writeResponse(t, w, "model", "length", "")
+					} else {
+						writeResponse(t, w, "model", "stop", "{")
+					}
+					return
+				}
+				writeResponse(t, w, "model", "stop", validMovie)
+			}))
+			defer server.Close()
+			client, _ := New(Config{BaseURL: server.URL, APIKey: "key", Model: "model"}, server.Client())
+			result, err := client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie})
+			if err != nil || result.ProviderRequests != 2 || calls.Load() != 2 {
+				t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
+			}
+		})
 	}
 }
 

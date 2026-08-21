@@ -206,6 +206,7 @@ type Decision struct {
 // correlation, cap, agreement, and acceptance rules.
 func Aggregate(results []ResolverResult) Decision {
 	grouped := make(map[int][]sourcedCandidate)
+	anchorSourcesByID := make(map[int]map[string]bool)
 	for _, result := range results {
 		// Operational failures and abstentions are absence of evidence. Even if
 		// a buggy adapter attaches stale candidates, they must not affect score,
@@ -216,9 +217,24 @@ func Aggregate(results []ResolverResult) Decision {
 		for _, candidate := range result.Candidates {
 			if candidate.Identity.TMDBID > 0 {
 				grouped[candidate.Identity.TMDBID] = append(grouped[candidate.Identity.TMDBID], sourcedCandidate{Candidate: candidate, Resolver: result.Name})
+				for _, evidence := range candidate.Evidence {
+					if evidence.Points > 0 && isIdentityAnchorFamily(evidence.Family) {
+						source := result.Name
+						if source == "" {
+							source = evidence.Source
+						}
+						if source != "" {
+							if anchorSourcesByID[candidate.Identity.TMDBID] == nil {
+								anchorSourcesByID[candidate.Identity.TMDBID] = make(map[string]bool)
+							}
+							anchorSourcesByID[candidate.Identity.TMDBID][source] = true
+						}
+					}
+				}
 			}
 		}
 	}
+	markContradictorySourceAnchors(grouped, anchorSourcesByID)
 
 	ids := make([]int, 0, len(grouped))
 	for id := range grouped {
@@ -335,11 +351,6 @@ func scoreCandidate(id int, candidates []sourcedCandidate) AggregateCandidate {
 	anchorSources := make(map[string]bool)
 	for _, candidate := range candidates {
 		resolver := candidate.Resolver
-		if resolver != "" {
-			// A normalized nomination is sufficient for catalog source
-			// agreement. Its identity bridge remains score-neutral.
-			sources[resolver] = true
-		}
 		for _, evidence := range candidate.Evidence {
 			if evidence.Points <= 0 {
 				continue
@@ -353,8 +364,10 @@ func scoreCandidate(id int, candidates []sourcedCandidate) AggregateCandidate {
 			if resolver == "" {
 				continue
 			}
-			sources[resolver] = true
-			if evidence.Family == FamilyFileIdentity || evidence.Family == FamilyExternalIdentity {
+			if supportsAgreement(evidence.Family) {
+				sources[resolver] = true
+			}
+			if isIdentityAnchorFamily(evidence.Family) {
 				anchorSources[resolver] = true
 			}
 		}
@@ -377,6 +390,44 @@ func scoreCandidate(id int, candidates []sourcedCandidate) AggregateCandidate {
 		return result.HardConflicts[i].Source < result.HardConflicts[j].Source
 	})
 	return result
+}
+
+func supportsAgreement(family EvidenceFamily) bool {
+	switch family {
+	case FamilyFileIdentity, FamilyTitle, FamilyTime, FamilyEpisode, FamilyContext:
+		return true
+	default:
+		return false
+	}
+}
+
+func isIdentityAnchorFamily(family EvidenceFamily) bool {
+	return family == FamilyFileIdentity || family == FamilyExternalIdentity
+}
+
+func markContradictorySourceAnchors(grouped map[int][]sourcedCandidate, sourcesByID map[int]map[string]bool) {
+	for id, sources := range sourcesByID {
+		conflicts := false
+		for otherID, otherSources := range sourcesByID {
+			if otherID == id {
+				continue
+			}
+			for source := range sources {
+				for otherSource := range otherSources {
+					if source != otherSource {
+						conflicts = true
+					}
+				}
+			}
+		}
+		if conflicts && len(grouped[id]) > 0 {
+			grouped[id][0].Evidence = append(grouped[id][0].Evidence, Evidence{
+				Family: FamilyExternalIdentity, Type: EvidenceExternalIdentityConflict,
+				Source: "source_identity_anchors", Points: PointsExternalIdentityConflict,
+				SafeDetails: "independent source identity anchors disagree",
+			})
+		}
+	}
 }
 
 func stronger(candidate, current int) bool {
