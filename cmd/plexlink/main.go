@@ -76,13 +76,15 @@ func run() int {
 		client := opensubtitles.NewClient(cfg.Resolvers.OpenSubtitles.BaseURL, key, "PlexLink/0.1", resolverHTTP)
 		p.Resolvers = append(p.Resolvers, opensubtitles.New(client, cfg.Resolvers.OpenSubtitles.RepresentativeFiles))
 	}
+	var kinopoiskClient *kinopoisk.Client
 	if cfg.Resolvers.Kinopoisk.Enabled {
 		key, keyErr := cfg.KinopoiskKey()
 		if keyErr != nil {
 			fmt.Fprintln(os.Stderr, keyErr)
 			return 40
 		}
-		p.Resolvers = append(p.Resolvers, kinopoisk.NewResolver(kinopoisk.NewClient(cfg.Resolvers.Kinopoisk.BaseURL, key, resolverHTTP)))
+		kinopoiskClient = kinopoisk.NewClient(cfg.Resolvers.Kinopoisk.BaseURL, key, resolverHTTP)
+		p.Resolvers = append(p.Resolvers, kinopoisk.NewResolver(kinopoiskClient))
 	}
 	if cfg.Resolvers.TVMaze.Enabled {
 		tvmazeClient := tvmaze.New(cfg.Resolvers.TVMaze.BaseURL, resolverHTTP)
@@ -130,6 +132,9 @@ func run() int {
 		}
 		for _, diagnostic := range doctor.ResolverConfiguration(cfg.Resolvers) {
 			fmt.Println(diagnostic)
+		}
+		if cfg.Resolvers.Kinopoisk.Enabled {
+			fmt.Println(doctor.PoiskKinoStatus(ctx, kinopoiskClient))
 		}
 		fmt.Println("OK: configuration, qBittorrent, TMDB and hardlink probes")
 		return 0

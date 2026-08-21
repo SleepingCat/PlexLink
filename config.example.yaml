@@ -40,7 +40,7 @@ resolvers:
     representative_files: 3
   kinopoisk:
     enabled: false
-    base_url: "https://api.kinopoisk.dev/v1.4"
+    base_url: "https://api.poiskkino.dev"
     api_key_env: "PLEXLINK_KINOPOISK_API_KEY"
   tvmaze:
     enabled: true

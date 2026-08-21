@@ -151,7 +151,7 @@ func TestResolverDefaultsAndDisabledKeysAreOptional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Resolvers.Timeout != "10s" || cfg.Resolvers.OpenSubtitles.RepresentativeFiles != 3 || cfg.Resolvers.OpenSubtitles.BaseURL != "https://api.opensubtitles.com/api/v1" || cfg.Resolvers.Kinopoisk.BaseURL != "https://api.kinopoisk.dev/v1.4" || cfg.Resolvers.TVMaze.BaseURL != "https://api.tvmaze.com" {
+	if cfg.Resolvers.Timeout != "10s" || cfg.Resolvers.OpenSubtitles.RepresentativeFiles != 3 || cfg.Resolvers.OpenSubtitles.BaseURL != "https://api.opensubtitles.com/api/v1" || cfg.Resolvers.Kinopoisk.BaseURL != "https://api.poiskkino.dev" || cfg.Resolvers.TVMaze.BaseURL != "https://api.tvmaze.com" {
 		t.Fatalf("resolver defaults=%+v", cfg.Resolvers)
 	}
 }

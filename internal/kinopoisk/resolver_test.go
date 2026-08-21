@@ -17,14 +17,26 @@ func TestResolverSearchHeaderUnicodeBoundedAndDedupe(t *testing.T) {
 	var mu sync.Mutex
 	var queries []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1.5/movie/search" {
+			t.Errorf("path = %q", req.URL.Path)
+		}
 		if got := req.Header.Get("X-API-KEY"); got != "secret-key" {
 			t.Errorf("API key = %q", got)
+		}
+		if got := req.URL.Query().Get("limit"); got != "10" {
+			t.Errorf("limit = %q", got)
+		}
+		if _, ok := req.URL.Query()["page"]; ok {
+			t.Errorf("unexpected page query: %q", req.URL.RawQuery)
+		}
+		if req.URL.Query().Get("query") == "Забавные Игры" && !strings.Contains(req.URL.RawQuery, "%D0%97%D0%B0%D0%B1%D0%B0%D0%B2%D0%BD%D1%8B%D0%B5") {
+			t.Errorf("unicode query was not escaped: %q", req.URL.RawQuery)
 		}
 		mu.Lock()
 		queries = append(queries, req.URL.Query().Get("query"))
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"docs":[{"id":42,"name":"Забавные Игры","alternativeName":"Funny Games","names":[{"name":"Забавные Игры","language":"ru"}],"year":1997,"type":"movie","externalId":{"tmdb":10234,"imdb":"tt0119167"}}]}`)
+		fmt.Fprint(w, completeEnvelope(`{"docs":[{"id":42,"name":"Забавные Игры","alternativeName":"Funny Games","enName":"Funny Games","names":[{"name":"Забавные Игры","language":"ru"}],"year":1997,"type":"movie","externalId":{"tmdb":"10234","imdb":"tt0119167"}}]}`))
 	}))
 	defer server.Close()
 	r := NewResolver(NewClient(server.URL, "secret-key", server.Client()))
@@ -98,7 +110,7 @@ func TestResolverPartialFailureKeepsUsefulResult(t *testing.T) {
 			http.Error(w, "provider secret response", http.StatusInternalServerError)
 			return
 		}
-		fmt.Fprint(w, `{"docs":[{"id":1,"name":"good","type":"movie"}]}`)
+		fmt.Fprint(w, completeEnvelope(`{"docs":[{"id":1,"name":"good","type":"movie"}]}`))
 	}))
 	defer server.Close()
 	result := NewResolver(NewClient(server.URL, "key", server.Client())).Resolve(context.Background(), ensemble.ResolveRequest{Kind: model.KindMovie, Title: "bad", TitleHypotheses: []string{"good"}})
@@ -114,7 +126,7 @@ func TestResolverHTTPFailuresAreSafe(t *testing.T) {
 		retry  bool
 	}{
 		{401, ensemble.ErrorAuthentication, false}, {403, ensemble.ErrorAuthentication, false},
-		{429, ensemble.ErrorRateLimited, true}, {500, ensemble.ErrorProvider, true},
+		{429, ensemble.ErrorRateLimited, true}, {500, ensemble.ErrorProvider, true}, {503, ensemble.ErrorProvider, true},
 	} {
 		t.Run(fmt.Sprint(test.status), func(t *testing.T) {
 			r, closeServer := testResolver(t, test.status, `api-key secret-key raw-body`)
@@ -148,6 +160,14 @@ func TestResolverInvalidResponseAndCancellation(t *testing.T) {
 			t.Fatalf("result = %+v", result)
 		}
 	})
+	t.Run("bare array", func(t *testing.T) {
+		r, closeServer := testResolver(t, http.StatusOK, `[]`)
+		defer closeServer()
+		result := r.Resolve(context.Background(), ensemble.ResolveRequest{Kind: model.KindMovie, Title: "query"})
+		if result.Error == nil || result.Error.Kind != ensemble.ErrorInvalidResponse {
+			t.Fatalf("result = %+v", result)
+		}
+	})
 	t.Run("canceled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -168,8 +188,18 @@ func TestResolverMissingCredentialIsConfigurationError(t *testing.T) {
 
 func testResolver(t *testing.T, status int, body string) (*Resolver, func()) {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status); _, _ = fmt.Fprint(w, body) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		if status == http.StatusOK && strings.HasPrefix(body, `{"docs"`) {
+			body = completeEnvelope(body)
+		}
+		_, _ = fmt.Fprint(w, body)
+	}))
 	return NewResolver(NewClient(server.URL, "key", server.Client())), server.Close
+}
+
+func completeEnvelope(body string) string {
+	return strings.TrimSuffix(body, "}") + `,"total":1,"limit":10,"page":1,"pages":1}`
 }
 
 func assertEvidence(t *testing.T, candidate ensemble.Candidate, typ ensemble.EvidenceType) {

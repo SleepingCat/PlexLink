@@ -207,7 +207,7 @@ func (c *Config) defaults() {
 		c.Resolvers.OpenSubtitles.RepresentativeFiles = 3
 	}
 	if c.Resolvers.Kinopoisk.BaseURL == "" {
-		c.Resolvers.Kinopoisk.BaseURL = "https://api.kinopoisk.dev/v1.4"
+		c.Resolvers.Kinopoisk.BaseURL = "https://api.poiskkino.dev"
 	}
 	if c.Resolvers.Kinopoisk.APIKey == "" && c.Resolvers.Kinopoisk.APIKeyEnv == "" {
 		c.Resolvers.Kinopoisk.APIKeyEnv = "PLEXLINK_KINOPOISK_API_KEY"

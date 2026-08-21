@@ -1,11 +1,13 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/SleepingCat/PlexLink/internal/config"
+	"github.com/SleepingCat/PlexLink/internal/kinopoisk"
 	"github.com/SleepingCat/PlexLink/internal/model"
 )
 
@@ -16,6 +18,17 @@ func ResolverConfiguration(cfg config.Resolvers) []string {
 		fmt.Sprintf("resolver tvmaze: enabled=%t", cfg.TVMaze.Enabled),
 		"resolver tmdb: enabled=true (canonical)",
 	}
+}
+
+func PoiskKinoStatus(ctx context.Context, client *kinopoisk.Client) string {
+	if client == nil {
+		return "resolver kinopoisk: unavailable (client not configured)"
+	}
+	info, err := client.Token(ctx)
+	if err != nil {
+		return fmt.Sprintf("resolver kinopoisk: unavailable (%v)", err)
+	}
+	return fmt.Sprintf("resolver kinopoisk: ok requests=%d/%d remaining=%d ttl=%d reset_at=%s", info.RequestsUsed, info.RequestsLimit, info.RequestsRemaining, info.TTL, info.ResetAt)
 }
 
 func Filesystems(paths config.Paths) error {

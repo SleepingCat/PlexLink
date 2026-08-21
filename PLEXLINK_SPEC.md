@@ -1,6 +1,6 @@
 # PlexLink — техническая спецификация для реализации
 
-> Revision 6 — 2026-08-21. Зафиксирована целевая архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**. TMDB/OpenSubtitles/Kinopoisk.dev/TVMaze собирают evidence параллельно, результаты нормализуются к TMDB identity, затем ранжируются числовыми баллами с caps по evidence families и hard-conflict rules. OpenRouter не является ещё одним голосом: он консультант для неоднозначных случаев. TV/Anime mapping больше не all-or-nothing: подтверждённые файлы могут линковаться независимо, а свежий эпизод с надёжной show/season context может иметь состояние `PROVISIONAL`. TMDB остаётся canonical metadata provider и финальным validator.
+> Revision 6 — 2026-08-21. Зафиксирована целевая архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**. TMDB/OpenSubtitles/PoiskKino/TVMaze собирают evidence параллельно, результаты нормализуются к TMDB identity, затем ранжируются числовыми баллами с caps по evidence families и hard-conflict rules. OpenRouter не является ещё одним голосом: он консультант для неоднозначных случаев. TV/Anime mapping больше не all-or-nothing: подтверждённые файлы могут линковаться независимо, а свежий эпизод с надёжной show/season context может иметь состояние `PROVISIONAL`. TMDB остаётся canonical metadata provider и финальным validator.
 
 ## 0. Цель
 
@@ -17,7 +17,7 @@
    - определяет тип контента по исходной папке;
    - разбирает release name и имена файлов;
    - сначала пытается определить media детерминированно через TMDB;
-   - собирает evidence параллельно через Resolver Ensemble (TMDB/OpenSubtitles/Kinopoisk.dev/TVMaze where applicable);
+   - собирает evidence параллельно через Resolver Ensemble (TMDB/OpenSubtitles/PoiskKino/TVMaze where applicable);
    - при недостаточной/конфликтующей evidence может использовать OpenRouter как AI consultant;
    - после AI-гипотезы выполняет один bounded catalog requery и **обязательно повторно проверяет результат через TMDB/evidence rules**;
    - строит структуру, рекомендованную Plex;
@@ -666,7 +666,7 @@ source S01E13 → canonical S00E01
 ```text
 TMDB deterministic
 OpenSubtitles file fingerprint
-Kinopoisk.dev
+PoiskKino
 TVMaze (TV/Anime only)
 ```
 
@@ -1553,7 +1553,7 @@ resolvers:
 
   kinopoisk:
     enabled: false
-    base_url: "https://api.kinopoisk.dev/v1.4"
+    base_url: "https://api.poiskkino.dev"
     api_key: ""
     api_key_env: "PLEXLINK_KINOPOISK_API_KEY"
 
@@ -2432,13 +2432,16 @@ model: openrouter/free (configurable)
 - operational failures → `ERROR`, no match → `ABSTAIN`;
 - никаких filesystem mutations.
 
-### 16B — Kinopoisk.dev resolver
+### 16B — PoiskKino resolver (`kinopoisk` config key)
 
-- `/v1.4/movie/search?query=...`;
+- base URL `https://api.poiskkino.dev` без API version;
+- `/v1.5/movie/search?query=...&limit=10`;
 - `X-API-KEY`;
+- response envelope `docs/total/limit/page/pages`, не bare array;
 - использовать names/alternative names/year/type/external IDs;
 - `externalId.tmdb`/`externalId.imdb` как identity bridges;
 - movie/tv/anime type mapping;
+- doctor проверяет optional resolver через `/v1.5/token` и не делает его outage общей ошибкой doctor;
 - возвращать common evidence, не принимать final decision.
 
 ### 16C — TVMaze resolver

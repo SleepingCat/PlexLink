@@ -349,7 +349,7 @@ local parser
         ↓
 TMDB deterministic ───────┐
 OpenSubtitles fingerprint ├─ parallel
-Kinopoisk.dev ────────────┤
+PoiskKino (`kinopoisk`) ──┤
 TVMaze (TV/Anime only) ───┘
         ↓
 normalize identities to TMDB
