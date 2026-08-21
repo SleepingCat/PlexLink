@@ -11,6 +11,17 @@ go test ./...
 go build -o plexlink.exe ./cmd/plexlink
 ```
 
+## Release
+
+Push a semantic version tag to publish a Windows amd64 release:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions tests the tagged revision and creates a release containing the Windows ZIP and its SHA-256 checksum automatically.
+
 Copy `config.example.yaml` to the gitignored `config.yaml` and adjust all paths. Secrets can be referenced through environment variables:
 
 ```powershell

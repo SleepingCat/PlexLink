@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows-amd64:
+    name: Build and release Windows amd64
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          go version
+          go env GOOS GOARCH
+
+      - name: Test
+        shell: pwsh
+        run: go test ./...
+
+      - name: Vet
+        shell: pwsh
+        run: go vet ./...
+
+      - name: Find CLI main package
+        id: mainpkg
+        shell: pwsh
+        run: |
+          $packages = @(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./... |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+          if ($packages.Count -ne 1) {
+            Write-Host "Detected main packages:"
+            $packages | ForEach-Object { Write-Host " - $_" }
+            throw "Expected exactly one Go main package, found $($packages.Count)"
+          }
+
+          $mainPackage = $packages[0].Trim()
+          Write-Host "CLI main package: $mainPackage"
+          "package=$mainPackage" >> $env:GITHUB_OUTPUT
+
+      - name: Build release package
+        id: package
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          MAIN_PACKAGE: ${{ steps.mainpkg.outputs.package }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Release tag '$env:TAG' is not a supported semantic version tag (expected vX.Y.Z)"
+          }
+
+          $packageName = "plexlink-$env:TAG-windows-amd64"
+          $packageDir = Join-Path $PWD "dist\$packageName"
+
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          go build `
+            -trimpath `
+            -ldflags="-s -w" `
+            -o (Join-Path $packageDir "plexlink.exe") `
+            $env:MAIN_PACKAGE
+
+          if (-not (Test-Path (Join-Path $packageDir "plexlink.exe"))) {
+            throw "plexlink.exe was not created"
+          }
+
+          $optionalFiles = @(
+            "config.example.yaml",
+            "README.md",
+            "LICENSE",
+            "LICENSE.txt"
+          )
+
+          foreach ($file in $optionalFiles) {
+            if (Test-Path $file) {
+              Copy-Item $file $packageDir
+            }
+          }
+
+          $zipPath = Join-Path $PWD "dist\$packageName.zip"
+          Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+
+          $hash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLowerInvariant()
+          $zipName = Split-Path $zipPath -Leaf
+          "$hash  $zipName" | Set-Content -Encoding ascii "dist\SHA256SUMS.txt"
+
+          Write-Host "Release asset: $zipPath"
+          Write-Host "SHA256: $hash"
+
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          "package_name=$packageName" >> $env:GITHUB_OUTPUT
+
+      - name: Create or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          git fetch --force --tags
+          git rev-parse --verify "refs/tags/$env:TAG" | Out-Null
+
+          gh release view $env:TAG *> $null
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:TAG already exists; replacing assets."
+            gh release upload `
+              $env:TAG `
+              $env:ZIP_PATH `
+              "dist\SHA256SUMS.txt" `
+              --clobber
+          }
+          else {
+            Write-Host "Creating release $env:TAG."
+            gh release create `
+              $env:TAG `
+              $env:ZIP_PATH `
+              "dist\SHA256SUMS.txt" `
+              --verify-tag `
+              --title "PlexLink $env:TAG" `
+              --generate-notes
+          }
