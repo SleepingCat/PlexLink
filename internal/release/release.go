@@ -15,6 +15,7 @@ var (
 	absAnime       = regexp.MustCompile(`(?i)(?:^|[\s._-])-?\s*(\d{1,3})(?:\s|\[|$)`)
 	explicitSeason = regexp.MustCompile(`(?i)S\d{1,2}E\d{1,3}`)
 	ignored        = regexp.MustCompile(`(?i)(^|[\\/._ -])(sample|trailer|proof|screens?|extras?)([\\/._ -]|$)`)
+	trailingNumber = regexp.MustCompile(`^(.*?)[\s._-]+(\d+)$`)
 )
 
 var mediaExt = map[string]bool{".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".webm": true, ".ts": true, ".m2ts": true}
@@ -68,6 +69,7 @@ func Parse(torrent model.Torrent, files []model.TorrentFile, kind model.Kind) (m
 		out = append(out, model.MediaFile{Name: f.Name, Ref: ref})
 	}
 	e.Titles = uniqueTitles(e.Titles)
+	e.Titles = addSeasonSuffixFallback(e.Titles, e.Episodes)
 	return e, out
 }
 
@@ -81,17 +83,61 @@ func NormalizeTitle(s string) string {
 }
 
 func uniqueTitles(in []model.WeightedTitle) []model.WeightedTitle {
-	m := map[string]model.WeightedTitle{}
+	positions := map[string]int{}
+	out := make([]model.WeightedTitle, 0, len(in))
 	for _, t := range in {
 		k := NormalizeTitle(t.Title)
-		if k != "" && t.Weight > m[k].Weight {
-			m[k] = t
+		if k == "" {
+			continue
 		}
-	}
-	out := make([]model.WeightedTitle, 0, len(m))
-	for _, t := range m {
+		if i, ok := positions[k]; ok {
+			if t.Weight > out[i].Weight {
+				out[i] = t
+			}
+			continue
+		}
+		positions[k] = len(out)
 		out = append(out, t)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Weight > out[j].Weight })
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Weight > out[j].Weight })
 	return out
+}
+
+func addSeasonSuffixFallback(titles []model.WeightedTitle, episodes []model.EpisodeRef) []model.WeightedTitle {
+	season := 0
+	for _, episode := range episodes {
+		if episode.Season <= 0 {
+			continue
+		}
+		if season != 0 && season != episode.Season {
+			return titles
+		}
+		season = episode.Season
+	}
+	if season == 0 {
+		return titles
+	}
+	additional := make([]model.WeightedTitle, 0)
+	for _, title := range titles {
+		match := trailingNumber.FindStringSubmatch(strings.TrimSpace(title.Title))
+		if len(match) != 3 || atoi(match[2]) != season {
+			continue
+		}
+		trimmed := strings.TrimSpace(match[1])
+		if trimmed != "" {
+			additional = append(additional, model.WeightedTitle{Title: trimmed, Weight: title.Weight})
+		}
+	}
+	return uniqueTitles(append(titles, additional...))
+}
+
+func atoi(value string) int {
+	n := 0
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }

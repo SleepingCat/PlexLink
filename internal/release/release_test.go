@@ -34,3 +34,27 @@ func TestAnimeAbsolute(t *testing.T) {
 		t.Fatalf("unexpected %+v", f)
 	}
 }
+
+func TestSeasonSuffixFallback(t *testing.T) {
+	titles := []model.WeightedTitle{{Title: "Example Show 2", Weight: 3}}
+	episodes := []model.EpisodeRef{{Season: 2, Episode: 1}, {Season: 2, Episode: 10}}
+	got := addSeasonSuffixFallback(titles, episodes)
+	found := false
+	for _, title := range got {
+		if title.Title == "Example Show" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing title without season suffix: %+v", got)
+	}
+}
+
+func TestSeasonSuffixFallbackRequiresUnambiguousMatchingSeason(t *testing.T) {
+	titles := []model.WeightedTitle{{Title: "Example Show 2", Weight: 3}}
+	episodes := []model.EpisodeRef{{Season: 1, Episode: 1}, {Season: 2, Episode: 1}}
+	got := addSeasonSuffixFallback(titles, episodes)
+	if len(got) != 1 {
+		t.Fatalf("fallback created for ambiguous seasons: %+v", got)
+	}
+}

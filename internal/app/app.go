@@ -135,11 +135,8 @@ func (p *Processor) Process(ctx context.Context, hash string, dry bool, manualID
 	return r, nil
 }
 func (p *Processor) resolve(ctx context.Context, kind model.Kind, e model.Evidence, id int, r *Result) (model.Match, model.TVShow, error) {
-	query := ""
-	if len(e.Titles) > 0 {
-		query = e.Titles[0].Title
-	}
-	if query == "" {
+	queries := titleQueries(e)
+	if len(queries) == 0 {
 		return model.Match{}, model.TVShow{}, ErrUnresolved
 	}
 	if kind == model.KindMovie {
@@ -150,7 +147,7 @@ func (p *Processor) resolve(ctx context.Context, kind model.Kind, e model.Eviden
 			}
 			return model.Match{ID: m.ID, Name: m.Title, Year: year(m.ReleaseDate), Score: 999}, model.TVShow{}, nil
 		}
-		cs, err := p.Metadata.SearchMovie(ctx, query)
+		cs, err := p.searchMovies(ctx, queries)
 		if err != nil {
 			return model.Match{}, model.TVShow{}, fmt.Errorf("%w: %v", ErrMetadata, err)
 		}
@@ -168,7 +165,7 @@ func (p *Processor) resolve(ctx context.Context, kind model.Kind, e model.Eviden
 		}
 		return model.Match{ID: s.ID, Name: s.Name, Year: year(s.FirstAirDate), Score: 999}, s, nil
 	}
-	cs, err := p.Metadata.SearchTV(ctx, query)
+	cs, err := p.searchTV(ctx, queries)
 	if err != nil {
 		return model.Match{}, model.TVShow{}, fmt.Errorf("%w: %v", ErrMetadata, err)
 	}
@@ -185,6 +182,70 @@ func (p *Processor) resolve(ctx context.Context, kind model.Kind, e model.Eviden
 		return m, s, fmt.Errorf("%w: %v", ErrMetadata, err)
 	}
 	return m, s, nil
+}
+
+func titleQueries(e model.Evidence) []string {
+	seen := map[string]bool{}
+	queries := make([]string, 0, len(e.Titles))
+	for _, title := range e.Titles {
+		key := release.NormalizeTitle(title.Title)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		queries = append(queries, title.Title)
+	}
+	return queries
+}
+
+func (p *Processor) searchTV(ctx context.Context, queries []string) ([]model.TVCandidate, error) {
+	seen := map[int]bool{}
+	var combined []model.TVCandidate
+	var firstErr error
+	for _, query := range queries {
+		results, err := p.Metadata.SearchTV(ctx, query)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, candidate := range results {
+			if !seen[candidate.ID] {
+				seen[candidate.ID] = true
+				combined = append(combined, candidate)
+			}
+		}
+	}
+	if len(combined) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return combined, nil
+}
+
+func (p *Processor) searchMovies(ctx context.Context, queries []string) ([]model.MovieCandidate, error) {
+	seen := map[int]bool{}
+	var combined []model.MovieCandidate
+	var firstErr error
+	for _, query := range queries {
+		results, err := p.Metadata.SearchMovie(ctx, query)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, candidate := range results {
+			if !seen[candidate.ID] {
+				seen[candidate.ID] = true
+				combined = append(combined, candidate)
+			}
+		}
+	}
+	if len(combined) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return combined, nil
 }
 func (p *Processor) kind(path string) (model.Kind, string, string, bool) {
 	types := []model.Kind{model.KindTV, model.KindMovie, model.KindAnime}
