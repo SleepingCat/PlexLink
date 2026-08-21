@@ -75,11 +75,23 @@ func Parse(torrent model.Torrent, files []model.TorrentFile, kind model.Kind) (m
 
 func NormalizeTitle(s string) string {
 	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if isApostrophe(r) {
+			return -1
+		}
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			return unicode.ToLower(r)
 		}
 		return ' '
 	}, s)), " ")
+}
+
+func isApostrophe(r rune) bool {
+	switch r {
+	case '\'', '’', '‘', '‛', 'ʼ', '＇':
+		return true
+	default:
+		return false
+	}
 }
 
 func uniqueTitles(in []model.WeightedTitle) []model.WeightedTitle {

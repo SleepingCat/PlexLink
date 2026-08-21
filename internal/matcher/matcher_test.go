@@ -19,6 +19,23 @@ func TestAmbiguousStaysUnresolved(t *testing.T) {
 	}
 }
 
+func TestNormalizedExactTitleScore(t *testing.T) {
+	tests := []struct{ evidence, candidate string }{
+		{"The Devils Hour", "The Devil's Hour"},
+		{"The Devils Hour", "The Devil’s Hour"},
+		{"Marvels Daredevil", "Marvel's Daredevil"},
+		{"Counterpart", "Counterpart"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.candidate, func(t *testing.T) {
+			evidence := model.Evidence{Titles: []model.WeightedTitle{{Title: tc.evidence, Weight: 3}}}
+			if got := scoreTitles(evidence, tc.candidate); got != 60 {
+				t.Fatalf("scoreTitles(%q, %q) = %d, want 60", tc.evidence, tc.candidate, got)
+			}
+		})
+	}
+}
+
 func TestBreakdownContributionsSumToScore(t *testing.T) {
 	evidence := model.Evidence{Titles: []model.WeightedTitle{{Title: "Counterpart", Weight: 3}}, Year: 2017, Episodes: []model.EpisodeRef{{Season: 2, Episode: 1}, {Season: 2, Episode: 2}, {Season: 2, Episode: 3}}}
 	_, tvCandidates, err := TV(context.Background(), seasons{2: {SeasonNumber: 2, Episodes: []model.Episode{{EpisodeNumber: 1}, {EpisodeNumber: 3}}}}, evidence, []model.TVCandidate{{ID: 1, Name: "Counterpart", FirstAirDate: "2017-01-01"}}, 80, 15)

@@ -28,6 +28,28 @@ func TestCyrillicNormalization(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestNormalizeTitleRemovesApostrophesInsideWords(t *testing.T) {
+	cases := []string{
+		"The Devils Hour",
+		"The Devil's Hour",
+		"The Devil’s Hour",
+		"The Devil‘s Hour",
+		"The Devilʼs Hour",
+		"“The Devil’s Hour”",
+	}
+	for _, input := range cases {
+		if got := NormalizeTitle(input); got != "the devils hour" {
+			t.Errorf("NormalizeTitle(%q) = %q", input, got)
+		}
+	}
+}
+
+func TestNormalizeTitleGeneralPunctuation(t *testing.T) {
+	if left, right := NormalizeTitle("Show: The Hour"), NormalizeTitle("Show - The Hour"); left != right {
+		t.Fatalf("punctuation variants differ: %q != %q", left, right)
+	}
+}
 func TestAnimeAbsolute(t *testing.T) {
 	_, f := Parse(model.Torrent{Name: "[VARYG] Pluto", ContentPath: "Pluto"}, []model.TorrentFile{{Name: "[VARYG] Pluto - 03 [1080p].mkv", Priority: 1, Progress: 1}}, model.KindAnime)
 	if len(f) != 1 || !f[0].Ref.Absolute || f[0].Ref.Episode != 3 {
