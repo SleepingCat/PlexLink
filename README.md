@@ -30,6 +30,15 @@ tmdb:
 
 Use exactly one form for each secret: `password` or `password_env`, and `token` or `token_env`. A configuration containing literal secrets must remain outside Git and should be readable only by the account running PlexLink.
 
+For xAI, use exactly one of `ai.xai.api_key_env` or a literal key in a local gitignored configuration:
+
+```yaml
+ai:
+  enabled: true
+  xai:
+    api_key: "xai-..."
+```
+
 The TMDB token is an API Read Access Token (Bearer token). PlexLink uses `en-US` canonical names by default; Plex controls the display metadata language independently.
 
 ## Commands

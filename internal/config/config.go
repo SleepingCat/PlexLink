@@ -49,6 +49,7 @@ type AI struct {
 type XAI struct {
 	BaseURL         string `yaml:"base_url"`
 	APIKeyEnv       string `yaml:"api_key_env"`
+	APIKey          string `yaml:"api_key"`
 	Model           string `yaml:"model"`
 	ReasoningEffort string `yaml:"reasoning_effort"`
 }
@@ -118,7 +119,7 @@ func (c *Config) defaults() {
 	if c.AI.XAI.BaseURL == "" {
 		c.AI.XAI.BaseURL = "https://api.x.ai/v1"
 	}
-	if c.AI.XAI.APIKeyEnv == "" {
+	if c.AI.XAI.APIKeyEnv == "" && c.AI.XAI.APIKey == "" {
 		c.AI.XAI.APIKeyEnv = "PLEXLINK_XAI_API_KEY"
 	}
 	if c.AI.XAI.Model == "" {
@@ -169,8 +170,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("invalid config: ai.timeout: %w", err)
 		}
 	}
-	if c.AI.Enabled && (strings.TrimSpace(c.AI.XAI.BaseURL) == "" || strings.TrimSpace(c.AI.XAI.APIKeyEnv) == "" || strings.TrimSpace(c.AI.XAI.Model) == "") {
+	if c.AI.Enabled && (strings.TrimSpace(c.AI.XAI.BaseURL) == "" || strings.TrimSpace(c.AI.XAI.Model) == "") {
 		return errors.New("invalid config: incomplete ai.xai configuration")
+	}
+	if c.AI.Enabled && (strings.TrimSpace(c.AI.XAI.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.XAI.APIKey) == "") {
+		return errors.New("invalid config: set exactly one of ai.xai.api_key_env or ai.xai.api_key")
 	}
 	return nil
 }
@@ -187,7 +191,12 @@ func (c Config) Token() (string, error) {
 	}
 	return secret(c.TMDB.TokenEnv, "TMDB token")
 }
-func (c Config) AIKey() (string, error)   { return secret(c.AI.XAI.APIKeyEnv, "xAI API key") }
+func (c Config) AIKey() (string, error) {
+	if c.AI.XAI.APIKey != "" {
+		return c.AI.XAI.APIKey, nil
+	}
+	return secret(c.AI.XAI.APIKeyEnv, "xAI API key")
+}
 func (c Config) AITimeout() time.Duration { d, _ := time.ParseDuration(c.AI.Timeout); return d }
 func secret(name, label string) (string, error) {
 	v := os.Getenv(name)
