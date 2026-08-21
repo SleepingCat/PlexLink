@@ -1,2 +1,61 @@
 # PlexLink
-A small personal CLI application that identifies movies, TV series, and anime files using TMDB metadata and creates hard links organized according to Plex naming conventions. This allows Plex Media Server to correctly identify the media and retrieve metadata such as titles, descriptions, and posters.
+
+PlexLink is a small Go CLI that post-processes completed qBittorrent downloads. It identifies movies and TV/anime through TMDB and creates NTFS hardlinks in Plex-compatible directories. Torrent-owned source files are never moved, renamed, overwritten, or deleted.
+
+## Build
+
+Go 1.26 or newer is required.
+
+```sh
+go test ./...
+go build -o plexlink.exe ./cmd/plexlink
+```
+
+Copy `config.example.yaml` to the gitignored `config.yaml` and adjust all paths. Secrets can be referenced through environment variables:
+
+```powershell
+$env:PLEXLINK_QBT_PASSWORD = "..."
+$env:PLEXLINK_TMDB_TOKEN = "..."
+```
+
+For a precompiled executable, secrets may instead be stored directly in the local configuration:
+
+```yaml
+qbittorrent:
+  password: "..."
+tmdb:
+  token: "..."
+```
+
+Use exactly one form for each secret: `password` or `password_env`, and `token` or `token_env`. A configuration containing literal secrets must remain outside Git and should be readable only by the account running PlexLink.
+
+The TMDB token is an API Read Access Token (Bearer token). PlexLink uses `en-US` canonical names by default; Plex controls the display metadata language independently.
+
+## Commands
+
+```text
+plexlink doctor [--config config.yaml]
+plexlink process --hash INFOHASH [--dry-run]
+plexlink inspect --hash INFOHASH
+plexlink resolve --hash INFOHASH --tmdb-id ID
+```
+
+Start with `doctor`, then test a real completed torrent with `process --dry-run`. `inspect` emits the full JSON evidence, candidates, score and link plan. A successful `resolve` remembers the explicit TMDB ID for that torrent hash in `state/resolutions.yaml`.
+
+Configure qBittorrent's completion hook only after dry-run validation:
+
+```text
+"C:\path\plexlink.exe" process --hash "%I"
+```
+
+Point Plex TV libraries at the configured TV and anime targets, and the Plex Movie library at the movie target. Do not point PlexLink at the torrent source directories as targets.
+
+## Safety behavior
+
+- Low confidence or an insufficient score margin returns `UNRESOLVED` and creates no media links.
+- Anime absolute numbering is accepted only for one non-special TMDB season and an in-range episode.
+- An existing target hardlinked to the same source is a `NOOP`.
+- An existing target belonging to another file is a `CONFLICT`; it is never overwritten.
+- Dry-run creates neither directories nor hardlinks and does not persist unresolved reports.
+
+Exit codes are stable: `0` success, `10` ignored, `20` unresolved, `21` anime numbering unresolved, `30` conflict, `40` configuration, `41` qBittorrent, `42` TMDB, and `50` filesystem/hardlink failure.

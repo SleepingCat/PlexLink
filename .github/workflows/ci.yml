@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "The following files are not formatted with gofmt:"
+            echo "$files"
+            exit 1
+          fi
+
+  build-windows:
+    name: Build Windows amd64
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+
+          go build `
+            -trimpath `
+            -o dist/plexlink.exe `
+            ./cmd/plexlink
+
+      - name: Add distribution files
+        shell: pwsh
+        run: |
+          if (Test-Path "config.example.yaml") {
+            Copy-Item "config.example.yaml" "dist/config.example.yaml"
+          }
+
+          if (Test-Path "README.md") {
+            Copy-Item "README.md" "dist/README.md"
+          }
+
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash "dist/plexlink.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  plexlink.exe" | Set-Content -Encoding ascii "dist/plexlink.exe.sha256"
+
+          Write-Host "plexlink.exe SHA-256:"
+          Write-Host $hash
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: plexlink-windows-amd64
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error

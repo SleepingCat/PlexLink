@@ -1,0 +1,21 @@
+qbittorrent:
+  url: "http://127.0.0.1:8080"
+  username: "admin"
+  password_env: "PLEXLINK_QBT_PASSWORD"
+  # Alternative for a local gitignored config: password: "change-me"
+tmdb:
+  token_env: "PLEXLINK_TMDB_TOKEN"
+  # Alternative for a local gitignored config: token: "change-me"
+  language: "en-US"
+paths:
+  tv_source: "K:\\video\\serials"
+  movie_source: "K:\\video\\films"
+  anime_source: "K:\\Anime"
+  tv_target: "K:\\plex\\serials"
+  movie_target: "K:\\plex\\films"
+  anime_target: "K:\\plex\\anime"
+matching:
+  min_score: 80
+  min_margin: 15
+state:
+  directory: "C:\\Users\\Kenny\\AppData\\Local\\PlexLink"
