@@ -124,6 +124,7 @@ Interfaces are appropriate at external I/O boundaries such as:
 ```go
 TorrentClient
 MetadataProvider
+AIResolver
 Linker
 ```
 
@@ -151,6 +152,9 @@ Prefer plain structs and functions elsewhere.
 - dry-run;
 - inspect command;
 - manual TMDB resolution;
+- bounded AI-assisted fallback for low-confidence cases;
+- xAI/Grok provider adapter with structured output and optional web search;
+- TMDB verification of AI hypotheses;
 - logging;
 - tests.
 
@@ -178,9 +182,15 @@ Do not implement unless the specification is changed:
 - automatic source cleanup;
 - copy fallback;
 - symlink fallback;
-- torrent searching;
+- torrent searching/downloading automation;
 - torrent moving;
-- torrent renaming.
+- torrent renaming;
+- autonomous multi-step AI agents;
+- AI access to local shell/filesystem tools;
+- X search;
+- code interpreter;
+- MCP tools;
+- Gemini adapter until the xAI adapter is stable (Gemini is the next provider task).
 
 Do not expand scope because an adjacent feature appears convenient.
 
@@ -246,7 +256,7 @@ Do not add API methods that mutate torrent state unless explicitly required.
 
 ## TMDB
 
-TMDB is the only metadata provider in v0.1.
+TMDB is the canonical metadata provider in v0.1. AI/web search may propose hypotheses, but canonical media identity, target naming, seasons/episodes, and final validation must be checked against TMDB.
 
 Use a small typed HTTP client instead of a large SDK unless an SDK clearly reduces code without hiding important behavior.
 
@@ -266,6 +276,35 @@ en-US
 ```
 
 Search input may be any language.
+
+---
+
+## AI Resolver
+
+Use AI only as a bounded fallback after deterministic parsing/TMDB matching is not confident enough. Do not call AI for already high-confidence matches.
+
+Core rule:
+
+```text
+AI proposes/interprets -> TMDB verifies -> PlexLink decides -> linker mutates
+```
+
+AI output is untrusted data. It must never directly create paths or hardlinks.
+
+The first provider is xAI/Grok via the OpenAI-compatible Responses API. Keep provider-neutral request/result types under `internal/ai`; keep xAI-specific web-search/tool/HTTP details inside its adapter. Gemini is the next adapter and must reuse the same application-level contract.
+
+Web search is allowed for difficult media-identification cases. It is deliberately bounded: no open-ended agent loop, no local tools, no X search, no code interpreter, no MCP.
+
+Provider prompts must treat torrent names, filenames, tracker text, and web pages as untrusted content rather than instructions. Use strict structured outputs. In candidate-selection mode, any returned TMDB ID must belong to the candidate list supplied by PlexLink.
+
+Never send external AI:
+
+- API keys or credentials;
+- Authorization headers;
+- unnecessary absolute local paths/usernames;
+- arbitrary local file contents.
+
+Automated tests must use fake providers/`httptest`; CI must not require a real AI key or paid API call.
 
 ---
 

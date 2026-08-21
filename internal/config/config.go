@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/SleepingCat/PlexLink/internal/model"
 	"gopkg.in/yaml.v3"
@@ -14,6 +15,7 @@ import (
 type Config struct {
 	QBittorrent QBittorrent `yaml:"qbittorrent"`
 	TMDB        TMDB        `yaml:"tmdb"`
+	AI          AI          `yaml:"ai"`
 	Paths       Paths       `yaml:"paths"`
 	Matching    Matching    `yaml:"matching"`
 	State       State       `yaml:"state"`
@@ -31,6 +33,24 @@ type TMDB struct {
 	TokenEnv string `yaml:"token_env"`
 	Token    string `yaml:"token"`
 	Language string `yaml:"language"`
+}
+
+type AI struct {
+	Enabled         bool    `yaml:"enabled"`
+	Provider        string  `yaml:"provider"`
+	WebSearch       string  `yaml:"web_search"`
+	MinConfidence   float64 `yaml:"min_confidence"`
+	Timeout         string  `yaml:"timeout"`
+	MaxOutputTokens int     `yaml:"max_output_tokens"`
+	Cache           bool    `yaml:"cache"`
+	XAI             XAI     `yaml:"xai"`
+}
+
+type XAI struct {
+	BaseURL         string `yaml:"base_url"`
+	APIKeyEnv       string `yaml:"api_key_env"`
+	Model           string `yaml:"model"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
 }
 
 type Paths struct {
@@ -80,6 +100,33 @@ func (c *Config) defaults() {
 	if c.Matching.MinMargin == 0 {
 		c.Matching.MinMargin = 15
 	}
+	if c.AI.Provider == "" {
+		c.AI.Provider = "xai"
+	}
+	if c.AI.WebSearch == "" {
+		c.AI.WebSearch = "allow"
+	}
+	if c.AI.MinConfidence == 0 {
+		c.AI.MinConfidence = 0.90
+	}
+	if c.AI.Timeout == "" {
+		c.AI.Timeout = "45s"
+	}
+	if c.AI.MaxOutputTokens == 0 {
+		c.AI.MaxOutputTokens = 1200
+	}
+	if c.AI.XAI.BaseURL == "" {
+		c.AI.XAI.BaseURL = "https://api.x.ai/v1"
+	}
+	if c.AI.XAI.APIKeyEnv == "" {
+		c.AI.XAI.APIKeyEnv = "PLEXLINK_XAI_API_KEY"
+	}
+	if c.AI.XAI.Model == "" {
+		c.AI.XAI.Model = "grok-4.3"
+	}
+	if c.AI.XAI.ReasoningEffort == "" {
+		c.AI.XAI.ReasoningEffort = "low"
+	}
 }
 
 func (c Config) Validate() error {
@@ -108,6 +155,23 @@ func (c Config) Validate() error {
 	if c.Matching.MinScore < 1 || c.Matching.MinMargin < 0 {
 		return errors.New("invalid config: matching thresholds")
 	}
+	if c.AI.Provider != "" && c.AI.Provider != "xai" {
+		return errors.New("invalid config: ai.provider must be xai")
+	}
+	if c.AI.WebSearch != "" && c.AI.WebSearch != "never" && c.AI.WebSearch != "allow" && c.AI.WebSearch != "require" {
+		return errors.New("invalid config: ai.web_search must be never, allow, or require")
+	}
+	if (c.AI.MinConfidence != 0 && (c.AI.MinConfidence <= 0 || c.AI.MinConfidence > 1)) || c.AI.MaxOutputTokens < 0 {
+		return errors.New("invalid config: AI confidence/output limits")
+	}
+	if c.AI.Timeout != "" {
+		if _, err := time.ParseDuration(c.AI.Timeout); err != nil {
+			return fmt.Errorf("invalid config: ai.timeout: %w", err)
+		}
+	}
+	if c.AI.Enabled && (strings.TrimSpace(c.AI.XAI.BaseURL) == "" || strings.TrimSpace(c.AI.XAI.APIKeyEnv) == "" || strings.TrimSpace(c.AI.XAI.Model) == "") {
+		return errors.New("invalid config: incomplete ai.xai configuration")
+	}
 	return nil
 }
 
@@ -123,6 +187,8 @@ func (c Config) Token() (string, error) {
 	}
 	return secret(c.TMDB.TokenEnv, "TMDB token")
 }
+func (c Config) AIKey() (string, error)   { return secret(c.AI.XAI.APIKeyEnv, "xAI API key") }
+func (c Config) AITimeout() time.Duration { d, _ := time.ParseDuration(c.AI.Timeout); return d }
 func secret(name, label string) (string, error) {
 	v := os.Getenv(name)
 	if v == "" {

@@ -16,6 +16,7 @@ Copy `config.example.yaml` to the gitignored `config.yaml` and adjust all paths.
 ```powershell
 $env:PLEXLINK_QBT_PASSWORD = "..."
 $env:PLEXLINK_TMDB_TOKEN = "..."
+$env:PLEXLINK_XAI_API_KEY = "..." # only when ai.enabled is true
 ```
 
 For a precompiled executable, secrets may instead be stored directly in the local configuration:
@@ -35,12 +36,14 @@ The TMDB token is an API Read Access Token (Bearer token). PlexLink uses `en-US`
 
 ```text
 plexlink doctor [--config config.yaml]
-plexlink process --hash INFOHASH [--dry-run]
+plexlink process --hash INFOHASH [--dry-run] [--no-ai]
 plexlink inspect --hash INFOHASH
 plexlink resolve --hash INFOHASH --tmdb-id ID
 ```
 
 Start with `doctor`, then test a real completed torrent with `process --dry-run`. `inspect` emits the full JSON evidence, candidates, score and link plan. A successful `resolve` remembers the explicit TMDB ID for that torrent hash in `state/resolutions.yaml`.
+
+AI fallback is disabled in `config.example.yaml`. When explicitly enabled, PlexLink calls the configured xAI Responses API only after deterministic matching is insufficient. Grok may propose search queries or episode mappings, but PlexLink searches TMDB again and requires independent title/year/season/episode anchors before planning links. `--no-ai` disables the fallback for one invocation. Structured AI results are cached under `state/ai-cache`; API keys, Authorization headers, absolute local paths, and raw responses are not stored.
 
 Configure qBittorrent's completion hook only after dry-run validation:
 
@@ -58,4 +61,4 @@ Point Plex TV libraries at the configured TV and anime targets, and the Plex Mov
 - An existing target belonging to another file is a `CONFLICT`; it is never overwritten.
 - Dry-run creates neither directories nor hardlinks and does not persist unresolved reports.
 
-Exit codes are stable: `0` success, `10` ignored, `20` unresolved, `21` anime numbering unresolved, `30` conflict, `40` configuration, `41` qBittorrent, `42` TMDB, and `50` filesystem/hardlink failure.
+Exit codes are stable: `0` success, `10` ignored, `20` unresolved, `21` anime numbering unresolved, `30` conflict, `40` configuration, `41` qBittorrent, `42` TMDB, `43` an operational AI failure when fallback was needed, and `50` filesystem/hardlink failure.

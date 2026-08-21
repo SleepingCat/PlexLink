@@ -7,6 +7,19 @@ tmdb:
   token_env: "PLEXLINK_TMDB_TOKEN"
   # Alternative for a local gitignored config: token: "change-me"
   language: "en-US"
+ai:
+  enabled: false
+  provider: "xai"
+  web_search: "allow"
+  min_confidence: 0.90
+  timeout: "45s"
+  max_output_tokens: 1200
+  cache: true
+  xai:
+    base_url: "https://api.x.ai/v1"
+    api_key_env: "PLEXLINK_XAI_API_KEY"
+    model: "grok-4.3"
+    reasoning_effort: "low"
 paths:
   tv_source: "K:\\video\\serials"
   movie_source: "K:\\video\\films"

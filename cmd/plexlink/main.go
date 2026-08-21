@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/SleepingCat/PlexLink/internal/ai/providers/xai"
 	"github.com/SleepingCat/PlexLink/internal/app"
 	"github.com/SleepingCat/PlexLink/internal/config"
 	"github.com/SleepingCat/PlexLink/internal/doctor"
@@ -32,6 +33,7 @@ func run() int {
 	cfgPath := fs.String("config", config.DefaultPath(), "configuration file")
 	hash := fs.String("hash", "", "torrent infohash")
 	dry := fs.Bool("dry-run", false, "plan without filesystem changes")
+	noAI := fs.Bool("no-ai", false, "disable AI fallback for this run")
 	id := fs.Int("tmdb-id", 0, "explicit TMDB ID")
 	remember := fs.Bool("remember-alias", false, "reserved for a future release")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -57,6 +59,20 @@ func run() int {
 	qc, _ := qbt.New(cfg.QBittorrent.URL, cfg.QBittorrent.Username, password, h)
 	tc := tmdb.New(cfg.TMDB.URL, token, cfg.TMDB.Language, h)
 	p := &app.Processor{Torrents: qc, Metadata: tc, Config: cfg}
+	if cfg.AI.Enabled {
+		key, keyErr := cfg.AIKey()
+		if keyErr != nil {
+			fmt.Fprintln(os.Stderr, keyErr)
+			return 40
+		}
+		aiHTTP := &http.Client{Timeout: cfg.AITimeout()}
+		resolver, resolverErr := xai.New(xai.Config{BaseURL: cfg.AI.XAI.BaseURL, APIKey: key, Model: cfg.AI.XAI.Model, ReasoningEffort: cfg.AI.XAI.ReasoningEffort, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
+		if resolverErr != nil {
+			fmt.Fprintln(os.Stderr, resolverErr)
+			return 40
+		}
+		p.AI, p.AIProvider, p.AIModel = resolver, "xai", cfg.AI.XAI.Model
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if cmd == "doctor" {
@@ -90,7 +106,7 @@ func run() int {
 	if cmd == "inspect" {
 		*dry = true
 	}
-	r, err := p.Process(ctx, *hash, *dry, *id)
+	r, err := p.ProcessWithOptions(ctx, *hash, app.ProcessOptions{DryRun: *dry, ManualID: *id, NoAI: *noAI})
 	b, _ := json.MarshalIndent(r, "", "  ")
 	fmt.Println(string(b))
 	if err != nil {
@@ -108,6 +124,8 @@ func run() int {
 			return 41
 		case errors.Is(err, app.ErrMetadata):
 			return 42
+		case errors.Is(err, app.ErrAI):
+			return 43
 		default:
 			return 50
 		}

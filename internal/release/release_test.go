@@ -57,6 +57,16 @@ func TestAnimeAbsolute(t *testing.T) {
 	}
 }
 
+func TestExtractEpisodeTitle(t *testing.T) {
+	got := extractEpisodeTitle("BoJack Horseman s1e13 - Sabrina's Christmas Wish.mkv")
+	if got != "Sabrina's Christmas Wish" {
+		t.Fatalf("episode title=%q", got)
+	}
+	if got := extractEpisodeTitle("BoJack.Horseman.S01E12.1080p.WEB-DL.mkv"); got != "" {
+		t.Fatalf("technical metadata treated as episode title: %q", got)
+	}
+}
+
 func TestSeasonSuffixFallback(t *testing.T) {
 	titles := []model.WeightedTitle{{Title: "Example Show 2", Weight: 3}}
 	episodes := []model.EpisodeRef{{Season: 2, Episode: 1}, {Season: 2, Episode: 10}}

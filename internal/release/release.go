@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	absAnime       = regexp.MustCompile(`(?i)(?:^|[\s._-])-?\s*(\d{1,3})(?:\s|\[|$)`)
-	explicitSeason = regexp.MustCompile(`(?i)S\d{1,2}E\d{1,3}`)
-	ignored        = regexp.MustCompile(`(?i)(^|[\\/._ -])(sample|trailer|proof|screens?|extras?)([\\/._ -]|$)`)
-	trailingNumber = regexp.MustCompile(`^(.*?)[\s._-]+(\d+)$`)
+	absAnime                = regexp.MustCompile(`(?i)(?:^|[\s._-])-?\s*(\d{1,3})(?:\s|\[|$)`)
+	explicitSeason          = regexp.MustCompile(`(?i)S\d{1,2}E\d{1,3}`)
+	ignored                 = regexp.MustCompile(`(?i)(^|[\\/._ -])(sample|trailer|proof|screens?|extras?)([\\/._ -]|$)`)
+	trailingNumber          = regexp.MustCompile(`^(.*?)[\s._-]+(\d+)$`)
+	episodeTitleAfterNumber = regexp.MustCompile(`(?i)S\d{1,2}E\d{1,3}(?:-E\d{1,3})?[\s._-]+(.+)$`)
 )
 
 var mediaExt = map[string]bool{".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".webm": true, ".ts": true, ".m2ts": true}
@@ -66,11 +67,24 @@ func Parse(torrent model.Torrent, files []model.TorrentFile, kind model.Kind) (m
 		if ref.Episode > 0 {
 			e.Episodes = append(e.Episodes, ref)
 		}
-		out = append(out, model.MediaFile{Name: f.Name, Ref: ref})
+		out = append(out, model.MediaFile{Name: f.Name, EpisodeTitle: extractEpisodeTitle(f.Name), Ref: ref})
 	}
 	e.Titles = uniqueTitles(e.Titles)
 	e.Titles = addSeasonSuffixFallback(e.Titles, e.Episodes)
 	return e, out
+}
+
+func extractEpisodeTitle(name string) string {
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	match := episodeTitleAfterNumber.FindStringSubmatch(base)
+	if len(match) != 2 {
+		return ""
+	}
+	parsed, err := torrentname.Parse(match[1])
+	if err != nil || parsed == nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.Title)
 }
 
 func NormalizeTitle(s string) string {

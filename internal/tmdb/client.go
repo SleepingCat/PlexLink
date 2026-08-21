@@ -90,3 +90,9 @@ func (c *Client) GetMovie(ctx context.Context, id int) (model.Movie, error) {
 	err := c.get(ctx, "/movie/"+strconv.Itoa(id)+"?language="+url.QueryEscape(c.language), &r)
 	return r, err
 }
+
+func (c *Client) GetMovieReleaseDates(ctx context.Context, id int) (model.MovieReleaseDates, error) {
+	var result model.MovieReleaseDates
+	err := c.get(ctx, "/movie/"+strconv.Itoa(id)+"/release_dates", &result)
+	return result, err
+}

@@ -34,9 +34,10 @@ type EpisodeRef struct {
 }
 
 type MediaFile struct {
-	Source string
-	Name   string
-	Ref    EpisodeRef
+	Source       string
+	Name         string
+	EpisodeTitle string
+	Ref          EpisodeRef
 }
 
 type Evidence struct {
@@ -84,8 +85,9 @@ type Season struct {
 }
 
 type Episode struct {
-	ID            int `json:"id"`
-	EpisodeNumber int `json:"episode_number"`
+	ID            int    `json:"id"`
+	EpisodeNumber int    `json:"episode_number"`
+	Name          string `json:"name"`
 }
 
 type Movie struct {
@@ -93,6 +95,20 @@ type Movie struct {
 	Title         string `json:"title"`
 	OriginalTitle string `json:"original_title"`
 	ReleaseDate   string `json:"release_date"`
+}
+
+type MovieReleaseDates struct {
+	Results []MovieReleaseCountry `json:"results"`
+}
+
+type MovieReleaseCountry struct {
+	CountryCode  string             `json:"iso_3166_1"`
+	ReleaseDates []MovieReleaseDate `json:"release_dates"`
+}
+
+type MovieReleaseDate struct {
+	Type        int    `json:"type"`
+	ReleaseDate string `json:"release_date"`
 }
 
 type Match struct {
@@ -107,4 +123,24 @@ type Match struct {
 type LinkPlan struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
+}
+
+type EpisodeValidationState string
+
+const (
+	EpisodeValid      EpisodeValidationState = "VALID"
+	EpisodeUnresolved EpisodeValidationState = "UNRESOLVED_EPISODE"
+)
+
+type EpisodeValidation struct {
+	File            string                 `json:"file"`
+	EpisodeTitle    string                 `json:"episode_title,omitempty"`
+	ParsedSeason    int                    `json:"parsed_season"`
+	ParsedEpisode   int                    `json:"parsed_episode"`
+	Season          int                    `json:"season"`
+	Episode         int                    `json:"episode"`
+	EpisodeEnd      int                    `json:"episode_end,omitempty"`
+	Remapped        bool                   `json:"remapped,omitempty"`
+	State           EpisodeValidationState `json:"state"`
+	MissingEpisodes []int                  `json:"missing_episodes,omitempty"`
 }

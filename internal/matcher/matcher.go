@@ -52,9 +52,7 @@ func TV(ctx context.Context, p TVMetadata, e model.Evidence, candidates []model.
 					s += 5
 					b = append(b, fmt.Sprintf("episode_S%02dE%02d=5", season, n))
 				} else {
-					s -= 30
-					b = append(b, fmt.Sprintf("episode_S%02dE%02d=-30", season, n))
-					valid = false
+					b = append(b, fmt.Sprintf("episode_S%02dE%02d=0", season, n))
 				}
 			}
 		}
@@ -79,17 +77,8 @@ func TV(ctx context.Context, p TVMetadata, e model.Evidence, candidates []model.
 	return scored[0].Match, all, nil
 }
 
-func Movie(e model.Evidence, candidates []model.MovieCandidate, minScore, minMargin int) (model.Match, []model.Match) {
-	var all []model.Match
-	for _, c := range candidates {
-		titleScore := scoreTitles(e, c.Title, c.OriginalTitle)
-		year := yearOf(c.ReleaseDate)
-		yearContribution := yearScore(e.Year, year, 30, -40)
-		s := titleScore + yearContribution
-		breakdown := []string{fmt.Sprintf("title=%d", titleScore), fmt.Sprintf("year=%d", yearContribution)}
-		all = append(all, model.Match{ID: c.ID, Name: c.Title, Year: year, Score: s, Breakdown: breakdown})
-	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].Score > all[j].Score })
+func Movie(e model.Evidence, candidates []model.MovieCandidate, validatedReleaseYears map[int]bool, minScore, minMargin int) (model.Match, []model.Match) {
+	all := ScoreMovies(e, candidates, validatedReleaseYears)
 	if len(all) == 0 {
 		return model.Match{}, all
 	}
@@ -102,6 +91,43 @@ func Movie(e model.Evidence, candidates []model.MovieCandidate, minScore, minMar
 		return model.Match{}, all
 	}
 	return all[0], all
+}
+
+func ScoreMovies(e model.Evidence, candidates []model.MovieCandidate, validatedReleaseYears map[int]bool) []model.Match {
+	var all []model.Match
+	for _, c := range candidates {
+		titleScore := scoreTitles(e, c.Title, c.OriginalTitle)
+		year := yearOf(c.ReleaseDate)
+		yearLabel, yearContribution := movieYearScore(e.Year, year, validatedReleaseYears[c.ID])
+		s := titleScore + yearContribution
+		breakdown := []string{fmt.Sprintf("title=%d", titleScore), fmt.Sprintf("%s=%d", yearLabel, yearContribution)}
+		all = append(all, model.Match{ID: c.ID, Name: c.Title, Year: year, Score: s, Breakdown: breakdown})
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Score > all[j].Score })
+	return all
+}
+
+func movieYearScore(source, candidate int, releaseDateValidated bool) (string, int) {
+	if source == 0 || candidate == 0 {
+		return "year_unknown", 0
+	}
+	if source == candidate {
+		return "year_primary", 30
+	}
+	if releaseDateValidated {
+		return "year_release_date", 30
+	}
+	difference := source - candidate
+	if difference < 0 {
+		difference = -difference
+	}
+	if difference == 1 {
+		return "year_nearby_unverified", 5
+	}
+	if difference == 2 {
+		return "year_mismatch", 0
+	}
+	return "year_mismatch", -40
 }
 
 func scoreTitles(e model.Evidence, names ...string) int {
