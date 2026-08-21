@@ -94,3 +94,36 @@ func TestLoadDoesNotDefaultGeminiAPIKeyEnvWhenLiteralKeyIsSet(t *testing.T) {
 		t.Fatalf("Gemini config=%+v", cfg.AI.Gemini)
 	}
 }
+
+func TestOpenRouterDefaultsAndEnvironmentKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\ntmdb:\n  token: token\nai:\n  enabled: true\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PLEXLINK_OPENROUTER_API_KEY", "openrouter-key")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AI.Provider != "openrouter" || cfg.AI.WebSearch != "never" || cfg.AI.MaxOutputTokens != 2048 || cfg.AI.OpenRouter.BaseURL != "https://openrouter.ai/api/v1" || cfg.AI.OpenRouter.Model != "openrouter/free" {
+		t.Fatalf("AI defaults=%+v", cfg.AI)
+	}
+	if key, err := cfg.AIKey(); err != nil || key != "openrouter-key" {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+}
+
+func TestOpenRouterLiteralKeyDoesNotGainEnvironmentDefault(t *testing.T) {
+	c := Config{QBittorrent: QBittorrent{URL: "http://qbt", Username: "user", Password: "secret"}, TMDB: TMDB{Token: "token"}, AI: AI{Enabled: true, Provider: "openrouter", WebSearch: "never", MinConfidence: .9, Timeout: "45s", MaxOutputTokens: 2048, OpenRouter: OpenRouter{BaseURL: "https://openrouter.ai/api/v1", Model: "openrouter/free", APIKey: "literal-key"}}, Paths: Paths{TVSource: "tv", MovieSource: "movies", AnimeSource: "anime", TVTarget: "ptv", MovieTarget: "pmovies", AnimeTarget: "panime"}, Matching: Matching{MinScore: 80, MinMargin: 15}, State: State{Directory: "state"}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := c.AIKey(); err != nil || key != "literal-key" {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+	c.AI.OpenRouter.APIKeyEnv = "PLEXLINK_OPENROUTER_API_KEY"
+	if err := c.Validate(); err == nil {
+		t.Fatal("simultaneous OpenRouter literal and environment key accepted")
+	}
+}

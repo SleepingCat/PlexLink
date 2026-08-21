@@ -153,9 +153,9 @@ Prefer plain structs and functions elsewhere.
 - inspect command;
 - manual TMDB resolution;
 - bounded AI-assisted fallback for low-confidence cases;
-- xAI/Grok provider adapter with structured output and optional web search;
-- Gemini provider adapter using native Gemini API, with `gemini-2.5-flash` as the free-tier-first default;
-- Gemini Google Search grounded discovery plus separate strict normalization when tools and strict schema cannot be combined;
+- OpenRouter provider adapter with strict structured output as the current default deployment provider;
+- current default model `openrouter/free`, configurable; actual backend model may vary and must be recorded in diagnostics;
+- xAI/Grok and Gemini adapters remain optional providers;
 - TMDB verification of AI hypotheses;
 - logging;
 - tests.
@@ -292,9 +292,11 @@ AI proposes/interprets -> TMDB verifies -> PlexLink decides -> linker mutates
 
 AI output is untrusted data. It must never directly create paths or hardlinks.
 
-AI providers must reuse the same application-level contract under `internal/ai`. xAI/Grok uses its OpenAI-compatible Responses API. Gemini uses the native Gemini API because Google Search grounding and provider execution metadata are provider-specific. Keep transport/tool details inside each provider adapter.
+AI providers must reuse the same application-level contract under `internal/ai`. Keep transport/tool details inside each provider adapter.
 
-For the current personal deployment, prefer `gemini-2.5-flash` as the configurable default. With Gemini 2.5, strict structured output and built-in Google Search cannot be combined in one request. Therefore the Gemini adapter may perform grounded discovery first and a second no-tools structured-normalization request. This remains one logical resolver task and must stay bounded.
+For the current personal deployment, prefer `provider: openrouter` with configurable model `openrouter/free`. Random backend selection is acceptable because AI only proposes hypotheses and TMDB/application validation remains authoritative. Use OpenRouter Chat Completions with strict JSON Schema and `provider.require_parameters=true`. The application-level `max_output_tokens` setting maps to OpenRouter `max_tokens`.
+
+The first OpenRouter adapter does not implement web search. `web_search=allow` may proceed without search, while `web_search=require` must fail as unsupported capability before sending an HTTP request. xAI/Grok and Gemini remain optional adapters and must not be required for normal operation.
 
 Web search is allowed for difficult media-identification cases. It is deliberately bounded: no open-ended agent loop, no local tools, no X search, no code interpreter, no MCP.
 
@@ -333,6 +335,16 @@ Use information from:
 Do not build a giant custom regex parser before proving the existing parser cannot handle a case.
 
 Project-specific normalization should remain small, explicit, and covered by tests.
+
+---
+
+## Resolver Ensemble (next architecture stage)
+
+After the OpenRouter adapter is proven with a real API request, the next resolver architecture should aggregate evidence from independent resolvers (OpenSubtitles hash, deterministic TMDB, Kinopoisk.dev, TVMaze for TV) rather than form a long fallback chain.
+
+Do not implement naïve majority voting. Weight evidence by type/strength and distinguish `MATCH`, `NO_MATCH`, `ABSTAIN`, and `ERROR`. A strong exact-file fingerprint may outweigh several correlated fuzzy-title guesses. Final accepted identity must still be verified through TMDB.
+
+Do not mix this ensemble refactor into the OpenRouter adapter change.
 
 ---
 
@@ -526,7 +538,7 @@ Preferred:
 config.yaml
 ```
 
-Secrets should be referenced via environment variables.
+Secrets should preferably be referenced via environment variables, but direct config values are supported where explicitly defined.
 
 Every AI provider adapter must support an `api_key` setting in `config.yaml` by default.
 
@@ -672,7 +684,7 @@ Use:
 httptest.Server
 ```
 
-for qBittorrent, TMDB, xAI, and Gemini provider HTTP behavior.
+for qBittorrent, TMDB, OpenRouter, xAI, and Gemini provider HTTP behavior.
 
 Do not require live Internet for automated tests.
 

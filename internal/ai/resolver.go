@@ -106,9 +106,14 @@ type Result struct {
 	EvidenceSummary  []string         `json:"evidence_summary"`
 	WebSearchUsed    *bool            `json:"-"`
 	ProviderRequests int              `json:"-"`
+	ActualModel      string           `json:"-"`
 }
 
-var ErrInvalidResult = errors.New("invalid AI result")
+var (
+	ErrInvalidResult         = errors.New("invalid AI result")
+	ErrProviderOutput        = errors.New("invalid AI provider output")
+	ErrUnsupportedCapability = errors.New("unsupported AI capability")
+)
 
 type ProviderRequestError struct {
 	Err      error

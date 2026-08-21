@@ -16,6 +16,7 @@ type cacheRecord struct {
 	PromptVersion string  `json:"prompt_version"`
 	Provider      string  `json:"provider"`
 	Model         string  `json:"model"`
+	ActualModel   string  `json:"actual_model,omitempty"`
 	Request       Request `json:"request"`
 	Result        Result  `json:"result"`
 }
@@ -45,6 +46,7 @@ func (c Cache) Load(key string) (Result, bool, error) {
 	if err := json.Unmarshal(b, &record); err != nil {
 		return Result{}, false, fmt.Errorf("decode AI cache: %w", err)
 	}
+	record.Result.ActualModel = record.ActualModel
 	return record.Result, true, nil
 }
 
@@ -53,7 +55,7 @@ func (c Cache) Save(key, provider, model string, req Request, result Result) err
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create AI cache: %w", err)
 	}
-	b, err := json.MarshalIndent(cacheRecord{PromptVersion, provider, model, req, result}, "", "  ")
+	b, err := json.MarshalIndent(cacheRecord{PromptVersion, provider, model, result.ActualModel, req, result}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode AI cache: %w", err)
 	}

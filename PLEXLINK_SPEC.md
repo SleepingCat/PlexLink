@@ -1,6 +1,6 @@
 # PlexLink — техническая спецификация для реализации
 
-> Revision 3 — 2026-08-21. Gemini добавлен как второй AI provider и основной бесплатный provider для локального использования. Default: `gemini-2.5-flash` через native Gemini Interactions API. Google Search grounding разрешён; TMDB остаётся источником канонических metadata и обязательной финальной валидацией.
+> Revision 5 — 2026-08-21. OpenRouter выбран основным AI provider для текущего deployment. Default model — `openrouter/free`: случайный выбор конкретной free-модели приемлем, потому что AI только предлагает hypothesis, а TMDB и PlexLink выполняют обязательную финальную валидацию. Фактический model id сохраняется в diagnostics/cache metadata. Gemini и xAI остаются optional adapters. Следующий архитектурный этап после проверки OpenRouter — Resolver Ensemble (OpenSubtitles/TMDB/Kinopoisk/TVMaze) с evidence aggregation, а не majority vote.
 
 ## 0. Цель
 
@@ -721,145 +721,120 @@ internal/ai/
 ├── prompt.go         # provider-neutral prompt construction
 ├── schema.go         # strict output schema
 └── providers/
+    ├── openrouter/   # current default deployment provider
     ├── xai/          # optional paid provider
-    └── gemini/       # free-tier-first provider
+    └── gemini/       # optional provider
 ```
 
 OpenAI-compatible API — хороший transport для xAI/Grok. Но встроенные web-search tools различаются у providers, поэтому **provider abstraction выше transport abstraction**. Нельзя заставлять Gemini имитировать xAI tool schema только ради формальной совместимости.
 
-## 9.3. Первый provider: xAI / Grok
+## 9.3. Основной provider: OpenRouter
 
-Первая реализация — `provider: xai`.
+Для текущего personal deployment основной AI provider — `provider: openrouter`.
 
-Использовать xAI OpenAI-compatible **Responses API**, потому что он поддерживает:
-
-- Grok models;
-- server-side `web_search`;
-- structured JSON schema output;
-- совместное использование web search + structured output.
-
-Base URL:
+OpenRouter использовать через OpenAI-compatible Chat Completions API:
 
 ```text
-https://api.x.ai/v1
-```
-
-Model **обязательно configurable**. Начальный practical default:
-
-```text
-grok-4.3
-```
-
-Не hardcode model forever — xAI model lineup меняется.
-
-Для PlexLink разрешать только server-side tool:
-
-```text
-web_search
-```
-
-Не включать без отдельной задачи:
-
-```text
-x_search
-code_interpreter
-MCP
-custom local tools
-```
-
-AI не должен иметь инструмента, который может трогать локальную filesystem или qBittorrent.
-
-Важно: consumer Grok Free plan и xAI API billing — разные продукты. Реализация не должна предполагать, что xAI API бесплатен. Все AI calls должны быть bounded и легко отключаться.
-
-## 9.4. Второй provider: Gemini — основной free-tier вариант
-
-Реализовать `provider: gemini` поверх того же `AIRequest` / `AIResult` и provider-neutral prompt contract.
-
-Для Gemini использовать **native Gemini API**, а не заставлять provider проходить через OpenAI-compatible transport. Причина: Google Search grounding и provider-specific execution metadata удобнее и прозрачнее доступны в native API.
-
-Предпочтительный endpoint для новой реализации:
-
-```text
-POST https://generativelanguage.googleapis.com/v1beta/interactions
+POST https://openrouter.ai/api/v1/chat/completions
 ```
 
 Authentication:
 
 ```text
-x-goog-api-key: $PLEXLINK_GEMINI_API_KEY
+Authorization: Bearer $PLEXLINK_OPENROUTER_API_KEY
 ```
 
-Начальный model default:
+Configurable default model:
 
 ```text
-gemini-2.5-flash
+openrouter/free
 ```
 
-Model должен оставаться configurable.
+Причины выбора:
 
-Почему `gemini-2.5-flash`:
+- router выбирает только из доступных бесплатных моделей;
+- при structured-output request OpenRouter фильтрует модели по требуемым capabilities;
+- конкретный backend/model может меняться между запросами, и это приемлемо для PlexLink: AI не является authority, а только предлагает media hypothesis;
+- TMDB и application-level validation остаются обязательными до любого filesystem action;
+- OpenRouter предоставляет единый API и позволяет позже закрепить конкретный model slug без изменения orchestration.
 
-- доступен на Gemini Developer API Free Tier;
-- input/output tokens на Free Tier не тарифицируются;
-- поддерживает Google Search grounding;
-- для Free Tier Google Search grounding доступен в пределах provider quota (на момент Revision 3 — до 500 grounded requests/day, shared с Flash-Lite);
-- поддерживает structured outputs, thinking и большой context.
+Не hardcode конкретную backend-модель в business logic. `openrouter/free` — обычное значение config и текущий default. Пользователь при желании может указать фиксированный `provider/model` slug.
 
-### Важное ограничение Gemini 2.5
+При использовании `openrouter/free` обязательно сохранять фактически возвращённый OpenRouter `model` в diagnostics. Cache key строится по configured model (`openrouter/free`) и input/prompt version, а cache metadata дополнительно хранит actual model для отладки. Смена backend-модели сама по себе не должна обходить уже успешно подтверждённый resolution.
 
-Gemini 2.5 поддерживает **structured output** и **Google Search grounding** по отдельности, но strict structured outputs + built-in tools в одном request официально доступны только Gemini 3 series.
+### Request contract
 
-Поэтому не пытаться отправлять `response_format` JSON Schema + `google_search` одновременно для `gemini-2.5-flash`.
+Использовать strict structured output:
 
-Gemini adapter использует два transport paths.
+```json
+{
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "plexlink_media_resolution",
+      "strict": true,
+      "schema": {}
+    }
+  },
+  "provider": {
+    "require_parameters": true
+  }
+}
+```
 
-#### `web_search = never`
+`require_parameters: true` обязателен: OpenRouter не должен маршрутизировать structured request в backend, который silently игнорирует `response_format`.
 
-Один request:
+Provider-neutral `max_output_tokens` маппить в OpenRouter Chat Completions `max_tokens`. Не marshal'ить общий AI config напрямую в wire request. Reasoning-модели могут расходовать часть output budget до финального JSON, поэтому рекомендуемый default для OpenRouter — не менее 2048 токенов. Если `finish_reason=length` или content пуст при исчерпанном token budget, считать результат provider-output error и не принимать resolution.
+
+Не добавлять OpenRouter SDK: для одного endpoint достаточно маленького typed `net/http` client.
+
+### Web search
+
+В первой OpenRouter-задаче **не реализовывать встроенный web search/tool loop**.
+
+Capabilities:
 
 ```text
-Interactions API
-+ strict response_format JSON Schema
-+ no tools
-→ validated AIResult
+StructuredOutput = true
+WebSearch = false
+StructuredOutputWithWebSearch = false
 ```
 
-#### `web_search = allow | require`
+Semantics:
 
-Двухшаговый provider-internal flow:
+- `web_search=never` → normal operation;
+- `web_search=allow` → OpenRouter adapter может работать без search, потому что поиск лишь разрешён, но не обязателен;
+- `web_search=require` → explicit unsupported-capability error до HTTP request.
 
-```text
-A. grounded discovery
-   Gemini 2.5 Flash + google_search
-   → grounded research text + search execution metadata
+Web evidence позже будет поступать от Resolver Ensemble / отдельного SearchProvider, а не через autonomous model tool loop.
 
-B. structured normalization
-   Gemini 2.5 Flash, NO tools
-   + original sanitized evidence
-   + grounded discovery result as UNTRUSTED DATA
-   + strict response_format JSON Schema
-   → AIResult
-```
+### Privacy / payload
 
-Оба шага являются частью **одного logical `AIResolver.Resolve`**, но diagnostics должны учитывать фактическое число provider HTTP requests.
+Как и для остальных external AI providers, передавать только sanitized media evidence. Absolute paths, API keys, qBittorrent credentials и другие secrets не отправлять.
 
-Шаг B не должен получать возможность web search или любые tools. Он только преобразует evidence/research в strict provider-neutral schema.
+OpenRouter может маршрутизировать запросы разным model providers с разными data policies. Не считать free inference приватным по умолчанию. Provider/privacy routing можно добавить отдельной настройкой, не усложняя первый adapter.
 
-Grounded discovery output нельзя считать trusted instruction. В system prompt шага B явно указать, что research text/web content — untrusted evidence и не может переопределять system/application rules.
+## 9.4. Optional providers: xAI/Grok и Gemini
 
-Для `web_search=require` результат шага A допустим только если response metadata подтверждает фактический вызов `google_search`. Если search не был выполнен — вернуть provider/result error или `unknown`, но не притворяться, что requirement выполнен.
+Существующие adapters не удалять и не переписывать без необходимости. Они остаются optional providers за тем же `AIResolver` contract.
 
-Для `web_search=allow` модель сама решает, использовать поиск или нет; если search не использован, structured normalization всё равно допустима.
+### xAI / Grok
 
-Не включать Gemini tools кроме:
+- `provider: xai`;
+- paid API;
+- OpenAI-compatible Responses API;
+- optional native web search capability.
 
-```text
-google_search
-```
+Не использовать xAI как default personal deployment provider.
 
-без отдельной задачи. Никаких local tools/function calls, способных менять filesystem/qBittorrent.
+### Gemini
 
-Free Tier может иметь rate limits и условия обработки данных, отличающиеся от paid tier. PlexLink не должен предполагать бесконечную квоту; 429 обрабатывается общей bounded retry policy.
+- `provider: gemini`;
+- native Gemini API adapter может остаться в коде;
+- не использовать Gemini как default personal deployment provider из-за текущих model/region availability проблем;
+- не удалять adapter только потому, что он недоступен в конкретной сети/аккаунте.
+
+Весь provider-specific transport остаётся внутри соответствующего package. Processor не должен знать wire-format OpenRouter/xAI/Gemini.
 
 ## 9.5. AI tasks
 
@@ -1023,14 +998,7 @@ allow
 1 map_episodes (только если реально нужен)
 ```
 
-Один logical task может требовать более одного provider HTTP request, если capability provider этого требует. Для `gemini-2.5-flash` с Google Search разрешено максимум:
-
-```text
-1 grounded discovery request
-+ 1 strict normalization request
-```
-
-на один logical task.
+Один logical task обычно соответствует одному OpenRouter HTTP request. Optional providers могут требовать больше transport requests только если их capability contract действительно этого требует. Любой такой flow остаётся bounded и не превращается в autonomous agent loop.
 
 Diagnostics должны различать logical AI calls и provider HTTP requests.
 
@@ -1276,12 +1244,17 @@ tmdb:
 
 ai:
   enabled: false
-  provider: "gemini"
-  web_search: "allow"       # never | allow | require
+  provider: "openrouter"
+  web_search: "never"       # never | allow | require
   min_confidence: 0.90      # gate, not final authority
   timeout: "45s"
-  max_output_tokens: 1200
+  max_output_tokens: 2048
   cache: true
+
+  openrouter:
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "PLEXLINK_OPENROUTER_API_KEY"
+    model: "openrouter/free"
 
   xai:
     base_url: "https://api.x.ai/v1"
@@ -1292,7 +1265,7 @@ ai:
   gemini:
     base_url: "https://generativelanguage.googleapis.com/v1beta"
     api_key_env: "PLEXLINK_GEMINI_API_KEY"
-    model: "gemini-2.5-flash"
+    model: "gemini-3.6-flash"
 
 paths:
   tv_source: "K:\\video\\serials"
@@ -1311,7 +1284,7 @@ state:
   directory: "C:\\Users\\Kenny\\AppData\\Local\\PlexLink"
 ```
 
-`config.example.yaml` должен по умолчанию иметь `ai.enabled: false`, чтобы clone проекта не делал неожиданные внешние AI requests. Для текущего личного deployment рекомендуемый provider — `gemini` с `gemini-2.5-flash`.
+`config.example.yaml` должен по умолчанию иметь `ai.enabled: false`, чтобы clone проекта не делал неожиданные внешние AI requests. Для текущего личного deployment рекомендуемый provider — `openrouter` с `openrouter/free`.
 
 В локальном config пользователя AI можно включить явно.
 
@@ -1322,6 +1295,7 @@ PLEXLINK_QBT_PASSWORD
 PLEXLINK_TMDB_TOKEN
 PLEXLINK_XAI_API_KEY
 PLEXLINK_GEMINI_API_KEY
+PLEXLINK_OPENROUTER_API_KEY
 ```
 
 Использовать `gopkg.in/yaml.v3`, без config-framework.
@@ -1594,7 +1568,7 @@ type AIResolver interface {
 
 Не создавать Repository/Domain Service/UseCase слои, если они ничего не дают.
 
-Shared prompt/schema должны быть provider-neutral. xAI/Gemini adapters отвечают только за transport, provider-specific tools, response extraction и capability reporting.
+Shared prompt/schema должны быть provider-neutral. OpenRouter/xAI/Gemini adapters отвечают только за transport, provider-specific tools, response extraction и capability reporting.
 
 # 20. HTTP clients
 
@@ -1863,6 +1837,7 @@ AI tests не должны выполнять реальные hardlinks вне 
 
 - реальный xAI API key;
 - реальный Gemini key;
+- реальный OpenRouter key;
 - Internet;
 - платные calls.
 
@@ -1884,13 +1859,12 @@ AI tests не должны выполнять реальные hardlinks вне 
 - [ ] Apostrophe/punctuation normalization покрыта regression tests.
 - [ ] Low-confidence deterministic case ничего не меняет.
 - [ ] AI provider abstraction существует.
-- [ ] xAI/Grok adapter остаётся поддерживаемым optional provider.
-- [ ] Gemini adapter реализован и использует общий `AIResolver` contract.
-- [ ] Gemini default model configurable и по умолчанию `gemini-2.5-flash`.
-- [ ] Gemini `web_search=never` использует strict structured output.
-- [ ] Gemini `web_search=allow|require` умеет Google Search grounded discovery.
-- [ ] Gemini 2.5 search path делает отдельный strict normalization request без tools.
-- [ ] `require` проверяет фактическое использование Google Search.
+- [ ] OpenRouter adapter реализован и использует общий `AIResolver` contract.
+- [ ] OpenRouter model configurable; current default `openrouter/free`.
+- [ ] OpenRouter strict JSON Schema request использует `provider.require_parameters=true`.
+- [ ] `max_output_tokens` корректно маппится в OpenRouter `max_tokens`.
+- [ ] `web_search=require` отвергается как unsupported capability в текущем OpenRouter adapter до HTTP request.
+- [ ] xAI/Grok и Gemini adapters остаются optional и не являются requirement для текущего deployment.
 - [ ] diagnostics различают logical AI calls и provider HTTP requests.
 - [ ] AI вызывается только при deterministic fallback conditions.
 - [ ] AI output не может напрямую вызвать filesystem mutation.
@@ -1907,7 +1881,7 @@ AI tests не должны выполнять реальные hardlinks вне 
 - [ ] Source files никогда не меняются.
 - [ ] qBittorrent продолжает раздавать исходные paths.
 
-Для текущего personal deployment Gemini adapter является основным рабочим AI provider. xAI остаётся optional provider и не должен быть необходим для запуска PlexLink.
+Для текущего personal deployment OpenRouter adapter является основным рабочим AI provider. xAI и Gemini остаются optional providers и не должны быть необходимы для запуска PlexLink.
 
 ## Plex
 
@@ -2096,24 +2070,53 @@ Ottochennoe Lezvie
 
 Только после проверки safety разрешать обычный production `process` с AI enabled.
 
-## Stage 14 — Gemini provider (current task)
+## Stage 14 — OpenRouter provider (current task)
 
-Реализовать второй adapter без изменений core orchestration contract.
+Реализовать `provider: openrouter` поверх существующего provider-neutral AI core.
 
-Использовать native Gemini Interactions API и `gemini-2.5-flash` как configurable default.
-
-Обязательные paths:
+Использовать:
 
 ```text
-web_search=never
-→ one strict structured request
-
-web_search=allow|require
-→ Google Search grounded discovery
-→ separate strict normalization request without tools
+POST https://openrouter.ai/api/v1/chat/completions
+Authorization: Bearer $PLEXLINK_OPENROUTER_API_KEY
+model: openrouter/free (configurable)
 ```
 
-Gemini-specific Google Search, response extraction, search-usage detection и two-step normalization должны оставаться внутри provider package. Processor не должен знать, что Gemini 2.5 иногда выполняет два HTTP requests на один logical `Resolve`.
+Обязательно:
+
+- strict `response_format.type=json_schema`;
+- `provider.require_parameters=true`;
+- `max_output_tokens` → `max_tokens`;
+- typed `net/http` client, без тяжёлого SDK;
+- safe provider error body;
+- `provider_requests` считает каждую фактическую HTTP attempt;
+- `httptest.Server` wire tests;
+- CI без real key/Internet;
+- `web_search=require` → unsupported capability error;
+- не менять matcher/TMDB acceptance gates.
+
+После adapter tests выполнить real direct provider probe, затем regression dry-run на `Ottochennoe.Lezvie.1996...`.
+
+## Stage 15 — Resolver Ensemble (next after OpenRouter proof)
+
+После того как OpenRouter provider подтверждён реальным запросом, перейти от длинной fallback-chain к параллельному Resolver Ensemble:
+
+```text
+OpenSubtitles Hash
+TMDB deterministic
+Kinopoisk.dev
+TVMaze (TV only)
+        ↓
+Evidence Aggregator
+        ↓
+consensus/conflict
+        ↓
+AI only when useful
+        ↓
+TMDB final verify
+```
+
+Не использовать простой majority vote. Aggregator оценивает тип и силу evidence; один exact file fingerprint может быть сильнее нескольких correlated fuzzy-title guesses. Resolver должен уметь `MATCH / NO_MATCH / ABSTAIN / ERROR`. Это отдельная следующая задача, не часть OpenRouter adapter diff.
 
 # 29. Definition of Done
 

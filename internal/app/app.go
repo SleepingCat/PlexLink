@@ -60,6 +60,7 @@ type AIDiagnostics struct {
 	Used             bool       `json:"ai_used"`
 	Provider         string     `json:"provider,omitempty"`
 	Model            string     `json:"model,omitempty"`
+	ActualModel      string     `json:"actual_model,omitempty"`
 	PromptVersion    string     `json:"prompt_version,omitempty"`
 	WebSearchPolicy  string     `json:"web_search_policy,omitempty"`
 	WebSearchUsed    *bool      `json:"web_search_used,omitempty"`
@@ -348,6 +349,7 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 			if err := ai.Validate(req, cached); err != nil {
 				return ai.Result{}, false, err
 			}
+			result.AI.ActualModel = cached.ActualModel
 			return cached, true, nil
 		}
 	}
@@ -358,6 +360,7 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 		return ai.Result{}, false, err
 	}
 	result.AI.ProviderRequests += resolved.ProviderRequests
+	result.AI.ActualModel = resolved.ActualModel
 	if err := ai.Validate(req, resolved); err != nil {
 		return ai.Result{}, false, err
 	}

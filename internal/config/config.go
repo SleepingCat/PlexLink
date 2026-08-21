@@ -36,15 +36,16 @@ type TMDB struct {
 }
 
 type AI struct {
-	Enabled         bool    `yaml:"enabled"`
-	Provider        string  `yaml:"provider"`
-	WebSearch       string  `yaml:"web_search"`
-	MinConfidence   float64 `yaml:"min_confidence"`
-	Timeout         string  `yaml:"timeout"`
-	MaxOutputTokens int     `yaml:"max_output_tokens"`
-	Cache           bool    `yaml:"cache"`
-	XAI             XAI     `yaml:"xai"`
-	Gemini          Gemini  `yaml:"gemini"`
+	Enabled         bool       `yaml:"enabled"`
+	Provider        string     `yaml:"provider"`
+	WebSearch       string     `yaml:"web_search"`
+	MinConfidence   float64    `yaml:"min_confidence"`
+	Timeout         string     `yaml:"timeout"`
+	MaxOutputTokens int        `yaml:"max_output_tokens"`
+	Cache           bool       `yaml:"cache"`
+	XAI             XAI        `yaml:"xai"`
+	Gemini          Gemini     `yaml:"gemini"`
+	OpenRouter      OpenRouter `yaml:"openrouter"`
 }
 
 type XAI struct {
@@ -56,6 +57,13 @@ type XAI struct {
 }
 
 type Gemini struct {
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	APIKey    string `yaml:"api_key"`
+	Model     string `yaml:"model"`
+}
+
+type OpenRouter struct {
 	BaseURL   string `yaml:"base_url"`
 	APIKeyEnv string `yaml:"api_key_env"`
 	APIKey    string `yaml:"api_key"`
@@ -110,10 +118,10 @@ func (c *Config) defaults() {
 		c.Matching.MinMargin = 15
 	}
 	if c.AI.Provider == "" {
-		c.AI.Provider = "gemini"
+		c.AI.Provider = "openrouter"
 	}
 	if c.AI.WebSearch == "" {
-		c.AI.WebSearch = "allow"
+		c.AI.WebSearch = "never"
 	}
 	if c.AI.MinConfidence == 0 {
 		c.AI.MinConfidence = 0.90
@@ -122,7 +130,16 @@ func (c *Config) defaults() {
 		c.AI.Timeout = "45s"
 	}
 	if c.AI.MaxOutputTokens == 0 {
-		c.AI.MaxOutputTokens = 1200
+		c.AI.MaxOutputTokens = 2048
+	}
+	if c.AI.OpenRouter.BaseURL == "" {
+		c.AI.OpenRouter.BaseURL = "https://openrouter.ai/api/v1"
+	}
+	if c.AI.OpenRouter.APIKeyEnv == "" && c.AI.OpenRouter.APIKey == "" {
+		c.AI.OpenRouter.APIKeyEnv = "PLEXLINK_OPENROUTER_API_KEY"
+	}
+	if c.AI.OpenRouter.Model == "" {
+		c.AI.OpenRouter.Model = "openrouter/free"
 	}
 	if c.AI.XAI.BaseURL == "" {
 		c.AI.XAI.BaseURL = "https://api.x.ai/v1"
@@ -173,8 +190,8 @@ func (c Config) Validate() error {
 	if c.Matching.MinScore < 1 || c.Matching.MinMargin < 0 {
 		return errors.New("invalid config: matching thresholds")
 	}
-	if c.AI.Provider != "" && c.AI.Provider != "xai" && c.AI.Provider != "gemini" {
-		return errors.New("invalid config: ai.provider must be xai or gemini")
+	if c.AI.Provider != "" && c.AI.Provider != "xai" && c.AI.Provider != "gemini" && c.AI.Provider != "openrouter" {
+		return errors.New("invalid config: ai.provider must be openrouter, xai, or gemini")
 	}
 	if c.AI.WebSearch != "" && c.AI.WebSearch != "never" && c.AI.WebSearch != "allow" && c.AI.WebSearch != "require" {
 		return errors.New("invalid config: ai.web_search must be never, allow, or require")
@@ -199,6 +216,12 @@ func (c Config) Validate() error {
 	if c.AI.Enabled && c.AI.Provider == "gemini" && (strings.TrimSpace(c.AI.Gemini.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.Gemini.APIKey) == "") {
 		return errors.New("invalid config: set exactly one of ai.gemini.api_key_env or ai.gemini.api_key")
 	}
+	if c.AI.Enabled && c.AI.Provider == "openrouter" && (strings.TrimSpace(c.AI.OpenRouter.BaseURL) == "" || strings.TrimSpace(c.AI.OpenRouter.Model) == "") {
+		return errors.New("invalid config: incomplete ai.openrouter configuration")
+	}
+	if c.AI.Enabled && c.AI.Provider == "openrouter" && (strings.TrimSpace(c.AI.OpenRouter.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.OpenRouter.APIKey) == "") {
+		return errors.New("invalid config: set exactly one of ai.openrouter.api_key_env or ai.openrouter.api_key")
+	}
 	return nil
 }
 
@@ -215,6 +238,12 @@ func (c Config) Token() (string, error) {
 	return secret(c.TMDB.TokenEnv, "TMDB token")
 }
 func (c Config) AIKey() (string, error) {
+	if c.AI.Provider == "openrouter" {
+		if c.AI.OpenRouter.APIKey != "" {
+			return c.AI.OpenRouter.APIKey, nil
+		}
+		return secret(c.AI.OpenRouter.APIKeyEnv, "OpenRouter API key")
+	}
 	if c.AI.Provider == "gemini" {
 		if c.AI.Gemini.APIKey != "" {
 			return c.AI.Gemini.APIKey, nil

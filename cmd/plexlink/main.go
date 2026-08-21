@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SleepingCat/PlexLink/internal/ai/providers/gemini"
+	"github.com/SleepingCat/PlexLink/internal/ai/providers/openrouter"
 	"github.com/SleepingCat/PlexLink/internal/ai/providers/xai"
 	"github.com/SleepingCat/PlexLink/internal/app"
 	"github.com/SleepingCat/PlexLink/internal/config"
@@ -69,6 +70,9 @@ func run() int {
 		aiHTTP := &http.Client{Timeout: cfg.AITimeout()}
 		var resolverErr error
 		switch cfg.AI.Provider {
+		case "openrouter":
+			p.AI, resolverErr = openrouter.New(openrouter.Config{BaseURL: cfg.AI.OpenRouter.BaseURL, APIKey: key, Model: cfg.AI.OpenRouter.Model, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
+			p.AIProvider, p.AIModel = "openrouter", cfg.AI.OpenRouter.Model
 		case "gemini":
 			p.AI, resolverErr = gemini.New(gemini.Config{BaseURL: cfg.AI.Gemini.BaseURL, APIKey: key, Model: cfg.AI.Gemini.Model, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
 			p.AIProvider, p.AIModel = "gemini", cfg.AI.Gemini.Model
