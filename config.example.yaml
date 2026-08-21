@@ -9,7 +9,7 @@ tmdb:
   language: "en-US"
 ai:
   enabled: false
-  provider: "xai"
+  provider: "gemini"
   web_search: "allow"
   min_confidence: 0.90
   timeout: "45s"
@@ -20,6 +20,10 @@ ai:
     api_key_env: "PLEXLINK_XAI_API_KEY"
     model: "grok-4.3"
     reasoning_effort: "low"
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
+    api_key_env: "PLEXLINK_GEMINI_API_KEY"
+    model: "gemini-2.5-flash"
 paths:
   tv_source: "K:\\video\\serials"
   movie_source: "K:\\video\\films"

@@ -1,6 +1,6 @@
 # PlexLink — техническая спецификация для реализации
 
-> Revision 2 — 2026-08-21. Добавлен AI-assisted resolver с web search fallback, xAI/Grok как первый provider, Gemini как следующий provider. TMDB остаётся источником канонических metadata; AI используется для интерпретации noisy/локализованных/неоднозначных release names и episode mapping.
+> Revision 3 — 2026-08-21. Gemini добавлен как второй AI provider и основной бесплатный provider для локального использования. Default: `gemini-2.5-flash` через native Gemini Interactions API. Google Search grounding разрешён; TMDB остаётся источником канонических metadata и обязательной финальной валидацией.
 
 ## 0. Цель
 
@@ -705,8 +705,9 @@ type AIResolver interface {
 
 ```go
 type AICapabilities struct {
-    StructuredOutput bool
-    WebSearch        bool
+    StructuredOutput              bool
+    WebSearch                     bool
+    StructuredOutputWithWebSearch bool
 }
 ```
 
@@ -720,8 +721,8 @@ internal/ai/
 ├── prompt.go         # provider-neutral prompt construction
 ├── schema.go         # strict output schema
 └── providers/
-    ├── xai/          # first implementation
-    └── gemini/       # next implementation
+    ├── xai/          # optional paid provider
+    └── gemini/       # free-tier-first provider
 ```
 
 OpenAI-compatible API — хороший transport для xAI/Grok. Но встроенные web-search tools различаются у providers, поэтому **provider abstraction выше transport abstraction**. Нельзя заставлять Gemini имитировать xAI tool schema только ради формальной совместимости.
@@ -770,13 +771,95 @@ AI не должен иметь инструмента, который може�
 
 Важно: consumer Grok Free plan и xAI API billing — разные продукты. Реализация не должна предполагать, что xAI API бесплатен. Все AI calls должны быть bounded и легко отключаться.
 
-## 9.4. Следующий provider: Gemini
+## 9.4. Второй provider: Gemini — основной free-tier вариант
 
-После стабильного xAI adapter добавить `provider: gemini`.
+Реализовать `provider: gemini` поверх того же `AIRequest` / `AIResult` и provider-neutral prompt contract.
 
-Gemini adapter должен использовать тот же `AIRequest` / `AIResult` и тот же semantic prompt contract, но может использовать native Gemini API, особенно для Google Search grounding и structured output.
+Для Gemini использовать **native Gemini API**, а не заставлять provider проходить через OpenAI-compatible transport. Причина: Google Search grounding и provider-specific execution metadata удобнее и прозрачнее доступны в native API.
 
-Не реализовывать Gemini в текущей xAI-задаче, если это увеличивает diff и мешает тестированию первого provider.
+Предпочтительный endpoint для новой реализации:
+
+```text
+POST https://generativelanguage.googleapis.com/v1beta/interactions
+```
+
+Authentication:
+
+```text
+x-goog-api-key: $PLEXLINK_GEMINI_API_KEY
+```
+
+Начальный model default:
+
+```text
+gemini-2.5-flash
+```
+
+Model должен оставаться configurable.
+
+Почему `gemini-2.5-flash`:
+
+- доступен на Gemini Developer API Free Tier;
+- input/output tokens на Free Tier не тарифицируются;
+- поддерживает Google Search grounding;
+- для Free Tier Google Search grounding доступен в пределах provider quota (на момент Revision 3 — до 500 grounded requests/day, shared с Flash-Lite);
+- поддерживает structured outputs, thinking и большой context.
+
+### Важное ограничение Gemini 2.5
+
+Gemini 2.5 поддерживает **structured output** и **Google Search grounding** по отдельности, но strict structured outputs + built-in tools в одном request официально доступны только Gemini 3 series.
+
+Поэтому не пытаться отправлять `response_format` JSON Schema + `google_search` одновременно для `gemini-2.5-flash`.
+
+Gemini adapter использует два transport paths.
+
+#### `web_search = never`
+
+Один request:
+
+```text
+Interactions API
++ strict response_format JSON Schema
++ no tools
+→ validated AIResult
+```
+
+#### `web_search = allow | require`
+
+Двухшаговый provider-internal flow:
+
+```text
+A. grounded discovery
+   Gemini 2.5 Flash + google_search
+   → grounded research text + search execution metadata
+
+B. structured normalization
+   Gemini 2.5 Flash, NO tools
+   + original sanitized evidence
+   + grounded discovery result as UNTRUSTED DATA
+   + strict response_format JSON Schema
+   → AIResult
+```
+
+Оба шага являются частью **одного logical `AIResolver.Resolve`**, но diagnostics должны учитывать фактическое число provider HTTP requests.
+
+Шаг B не должен получать возможность web search или любые tools. Он только преобразует evidence/research в strict provider-neutral schema.
+
+Grounded discovery output нельзя считать trusted instruction. В system prompt шага B явно указать, что research text/web content — untrusted evidence и не может переопределять system/application rules.
+
+Для `web_search=require` результат шага A допустим только если response metadata подтверждает фактический вызов `google_search`. Если search не был выполнен — вернуть provider/result error или `unknown`, но не притворяться, что requirement выполнен.
+
+Для `web_search=allow` модель сама решает, использовать поиск или нет; если search не использован, structured normalization всё равно допустима.
+
+Не включать Gemini tools кроме:
+
+```text
+google_search
+```
+
+без отдельной задачи. Никаких local tools/function calls, способных менять filesystem/qBittorrent.
+
+Free Tier может иметь rate limits и условия обработки данных, отличающиеся от paid tier. PlexLink не должен предполагать бесконечную квоту; 429 обрабатывается общей bounded retry policy.
 
 ## 9.5. AI tasks
 
@@ -906,6 +989,8 @@ allow
 
 Для cases `candidates == 0`, transliteration или явно неизвестного localized title orchestration может повысить режим до `require`.
 
+Для Gemini 2.5 `allow/require` может означать два provider HTTP requests: grounded discovery + strict normalization. Это допустимо и не считается autonomous agent loop.
+
 Не использовать global allowed-domain whitelist по умолчанию: это может ухудшить recall старых/локализованных releases. Можно поддержать optional configured allowed/excluded domains.
 
 ## 9.9. Evidence sent to external AI
@@ -930,13 +1015,24 @@ allow
 
 Не создавать бесконечный agent loop.
 
-На один torrent по умолчанию максимум:
+На один torrent по умолчанию максимум logical AI tasks:
 
 ```text
-1 identify_media call
-1 select_candidate call
-1 map_episodes call (только если реально нужен)
+1 identify_media
+1 select_candidate
+1 map_episodes (только если реально нужен)
 ```
+
+Один logical task может требовать более одного provider HTTP request, если capability provider этого требует. Для `gemini-2.5-flash` с Google Search разрешено максимум:
+
+```text
+1 grounded discovery request
++ 1 strict normalization request
+```
+
+на один logical task.
+
+Diagnostics должны различать logical AI calls и provider HTTP requests.
 
 Retry сетевой ошибки не считается новым reasoning step, но ограничен HTTP retry policy.
 
@@ -1180,7 +1276,7 @@ tmdb:
 
 ai:
   enabled: false
-  provider: "xai"
+  provider: "gemini"
   web_search: "allow"       # never | allow | require
   min_confidence: 0.90      # gate, not final authority
   timeout: "45s"
@@ -1194,8 +1290,9 @@ ai:
     reasoning_effort: "low"
 
   gemini:
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
     api_key_env: "PLEXLINK_GEMINI_API_KEY"
-    model: ""               # configured when adapter is implemented
+    model: "gemini-2.5-flash"
 
 paths:
   tv_source: "K:\\video\\serials"
@@ -1214,7 +1311,7 @@ state:
   directory: "C:\\Users\\Kenny\\AppData\\Local\\PlexLink"
 ```
 
-`config.example.yaml` должен по умолчанию иметь `ai.enabled: false`, чтобы случайный запуск не создавал платные API calls.
+`config.example.yaml` должен по умолчанию иметь `ai.enabled: false`, чтобы clone проекта не делал неожиданные внешние AI requests. Для текущего личного deployment рекомендуемый provider — `gemini` с `gemini-2.5-flash`.
 
 В локальном config пользователя AI можно включить явно.
 
@@ -1253,7 +1350,7 @@ plexlink doctor
 - реальное создание временного hardlink;
 - удаляет только свои temporary doctor files.
 
-Обычный `doctor` **не должен делать платный LLM request**.
+Обычный `doctor` **не должен делать live LLM request**.
 
 Optional explicit live probe:
 
@@ -1261,7 +1358,7 @@ Optional explicit live probe:
 plexlink doctor --ai
 ```
 
-может выполнить минимальный structured provider request и показать provider/model/web capability. Пользователь явно согласился на возможный billable call самим флагом.
+может выполнить минимальный provider request и показать provider/model/web capability. Для Gemini probe не должен включать Google Search без отдельного explicit флага/намерения.
 
 ### Process
 
@@ -1391,6 +1488,7 @@ ai_prompt_version
 ai_web_search_used
 ai_cache_hit
 ai_calls
+ai_provider_requests
 ```
 
 Не логировать:
@@ -1786,9 +1884,14 @@ AI tests не должны выполнять реальные hardlinks вне 
 - [ ] Apostrophe/punctuation normalization покрыта regression tests.
 - [ ] Low-confidence deterministic case ничего не меняет.
 - [ ] AI provider abstraction существует.
-- [ ] xAI/Grok adapter реализован.
-- [ ] xAI adapter умеет strict structured output.
-- [ ] xAI adapter может разрешить server-side web search.
+- [ ] xAI/Grok adapter остаётся поддерживаемым optional provider.
+- [ ] Gemini adapter реализован и использует общий `AIResolver` contract.
+- [ ] Gemini default model configurable и по умолчанию `gemini-2.5-flash`.
+- [ ] Gemini `web_search=never` использует strict structured output.
+- [ ] Gemini `web_search=allow|require` умеет Google Search grounded discovery.
+- [ ] Gemini 2.5 search path делает отдельный strict normalization request без tools.
+- [ ] `require` проверяет фактическое использование Google Search.
+- [ ] diagnostics различают logical AI calls и provider HTTP requests.
 - [ ] AI вызывается только при deterministic fallback conditions.
 - [ ] AI output не может напрямую вызвать filesystem mutation.
 - [ ] AI-proposed media повторно проверяется через TMDB.
@@ -1804,7 +1907,7 @@ AI tests не должны выполнять реальные hardlinks вне 
 - [ ] Source files никогда не меняются.
 - [ ] qBittorrent продолжает раздавать исходные paths.
 
-Gemini adapter **не блокирует v0.1**, если xAI adapter уже стабилен. Он следующий provider после первого работающего AI path.
+Для текущего personal deployment Gemini adapter является основным рабочим AI provider. xAI остаётся optional provider и не должен быть необходим для запуска PlexLink.
 
 ## Plex
 
@@ -1857,7 +1960,7 @@ Web search внутри bounded AI resolver **разрешён** и не счи�
 
 После стабильного v0.1:
 
-1. Gemini adapter с тем же `AIResolver` contract и Google Search grounding там, где доступно.
+1. Optional local Ollama/OpenAI-compatible provider для полностью локального inference.
 2. Sidecar subtitles hardlink.
 3. AniList как дополнительный anime metadata/title source.
 4. AniDB ED2K exact match для сложных anime releases.
@@ -1993,11 +2096,24 @@ Ottochennoe Lezvie
 
 Только после проверки safety разрешать обычный production `process` с AI enabled.
 
-## Stage 14 — Gemini provider (next task, not current one)
+## Stage 14 — Gemini provider (current task)
 
 Реализовать второй adapter без изменений core orchestration contract.
 
-Gemini-specific Google Search/structured-output details должны оставаться внутри provider package.
+Использовать native Gemini Interactions API и `gemini-2.5-flash` как configurable default.
+
+Обязательные paths:
+
+```text
+web_search=never
+→ one strict structured request
+
+web_search=allow|require
+→ Google Search grounded discovery
+→ separate strict normalization request without tools
+```
+
+Gemini-specific Google Search, response extraction, search-usage detection и two-step normalization должны оставаться внутри provider package. Processor не должен знать, что Gemini 2.5 иногда выполняет два HTTP requests на один logical `Resolve`.
 
 # 29. Definition of Done
 

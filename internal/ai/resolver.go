@@ -37,8 +37,9 @@ const (
 )
 
 type Capabilities struct {
-	StructuredOutput bool
-	WebSearch        bool
+	StructuredOutput              bool
+	WebSearch                     bool
+	StructuredOutputWithWebSearch bool
 }
 
 type Resolver interface {
@@ -92,18 +93,19 @@ type EpisodeMapping struct {
 }
 
 type Result struct {
-	Status          Status           `json:"status"`
-	MediaType       model.Kind       `json:"media_type"`
-	CanonicalTitle  string           `json:"canonical_title"`
-	LocalizedTitles []string         `json:"localized_titles"`
-	Year            int              `json:"year"`
-	Season          int              `json:"season"`
-	SearchQueries   []string         `json:"search_queries"`
-	SelectedTMDBID  *int             `json:"selected_tmdb_id"`
-	EpisodeMappings []EpisodeMapping `json:"episode_mappings"`
-	Confidence      float64          `json:"confidence"`
-	EvidenceSummary []string         `json:"evidence_summary"`
-	WebSearchUsed   *bool            `json:"-"`
+	Status           Status           `json:"status"`
+	MediaType        model.Kind       `json:"media_type"`
+	CanonicalTitle   string           `json:"canonical_title"`
+	LocalizedTitles  []string         `json:"localized_titles"`
+	Year             int              `json:"year"`
+	Season           int              `json:"season"`
+	SearchQueries    []string         `json:"search_queries"`
+	SelectedTMDBID   *int             `json:"selected_tmdb_id"`
+	EpisodeMappings  []EpisodeMapping `json:"episode_mappings"`
+	Confidence       float64          `json:"confidence"`
+	EvidenceSummary  []string         `json:"evidence_summary"`
+	WebSearchUsed    *bool            `json:"-"`
+	ProviderRequests int              `json:"-"`
 }
 
 var ErrInvalidResult = errors.New("invalid AI result")

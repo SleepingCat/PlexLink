@@ -44,6 +44,7 @@ type AI struct {
 	MaxOutputTokens int     `yaml:"max_output_tokens"`
 	Cache           bool    `yaml:"cache"`
 	XAI             XAI     `yaml:"xai"`
+	Gemini          Gemini  `yaml:"gemini"`
 }
 
 type XAI struct {
@@ -52,6 +53,12 @@ type XAI struct {
 	APIKey          string `yaml:"api_key"`
 	Model           string `yaml:"model"`
 	ReasoningEffort string `yaml:"reasoning_effort"`
+}
+
+type Gemini struct {
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	Model     string `yaml:"model"`
 }
 
 type Paths struct {
@@ -102,7 +109,7 @@ func (c *Config) defaults() {
 		c.Matching.MinMargin = 15
 	}
 	if c.AI.Provider == "" {
-		c.AI.Provider = "xai"
+		c.AI.Provider = "gemini"
 	}
 	if c.AI.WebSearch == "" {
 		c.AI.WebSearch = "allow"
@@ -127,6 +134,15 @@ func (c *Config) defaults() {
 	}
 	if c.AI.XAI.ReasoningEffort == "" {
 		c.AI.XAI.ReasoningEffort = "low"
+	}
+	if c.AI.Gemini.BaseURL == "" {
+		c.AI.Gemini.BaseURL = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	if c.AI.Gemini.APIKeyEnv == "" {
+		c.AI.Gemini.APIKeyEnv = "PLEXLINK_GEMINI_API_KEY"
+	}
+	if c.AI.Gemini.Model == "" {
+		c.AI.Gemini.Model = "gemini-2.5-flash"
 	}
 }
 
@@ -156,8 +172,8 @@ func (c Config) Validate() error {
 	if c.Matching.MinScore < 1 || c.Matching.MinMargin < 0 {
 		return errors.New("invalid config: matching thresholds")
 	}
-	if c.AI.Provider != "" && c.AI.Provider != "xai" {
-		return errors.New("invalid config: ai.provider must be xai")
+	if c.AI.Provider != "" && c.AI.Provider != "xai" && c.AI.Provider != "gemini" {
+		return errors.New("invalid config: ai.provider must be xai or gemini")
 	}
 	if c.AI.WebSearch != "" && c.AI.WebSearch != "never" && c.AI.WebSearch != "allow" && c.AI.WebSearch != "require" {
 		return errors.New("invalid config: ai.web_search must be never, allow, or require")
@@ -170,11 +186,14 @@ func (c Config) Validate() error {
 			return fmt.Errorf("invalid config: ai.timeout: %w", err)
 		}
 	}
-	if c.AI.Enabled && (strings.TrimSpace(c.AI.XAI.BaseURL) == "" || strings.TrimSpace(c.AI.XAI.Model) == "") {
+	if c.AI.Enabled && c.AI.Provider == "xai" && (strings.TrimSpace(c.AI.XAI.BaseURL) == "" || strings.TrimSpace(c.AI.XAI.Model) == "") {
 		return errors.New("invalid config: incomplete ai.xai configuration")
 	}
-	if c.AI.Enabled && (strings.TrimSpace(c.AI.XAI.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.XAI.APIKey) == "") {
+	if c.AI.Enabled && c.AI.Provider == "xai" && (strings.TrimSpace(c.AI.XAI.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.XAI.APIKey) == "") {
 		return errors.New("invalid config: set exactly one of ai.xai.api_key_env or ai.xai.api_key")
+	}
+	if c.AI.Enabled && c.AI.Provider == "gemini" && (strings.TrimSpace(c.AI.Gemini.BaseURL) == "" || strings.TrimSpace(c.AI.Gemini.Model) == "" || strings.TrimSpace(c.AI.Gemini.APIKeyEnv) == "") {
+		return errors.New("invalid config: incomplete ai.gemini configuration; api_key_env is required")
 	}
 	return nil
 }
@@ -192,6 +211,9 @@ func (c Config) Token() (string, error) {
 	return secret(c.TMDB.TokenEnv, "TMDB token")
 }
 func (c Config) AIKey() (string, error) {
+	if c.AI.Provider == "gemini" {
+		return secret(c.AI.Gemini.APIKeyEnv, "Gemini API key")
+	}
 	if c.AI.XAI.APIKey != "" {
 		return c.AI.XAI.APIKey, nil
 	}

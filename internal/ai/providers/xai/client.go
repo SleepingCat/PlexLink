@@ -38,7 +38,7 @@ func New(config Config, client *http.Client) (*Client, error) {
 }
 
 func (c *Client) Capabilities() ai.Capabilities {
-	return ai.Capabilities{StructuredOutput: true, WebSearch: true}
+	return ai.Capabilities{StructuredOutput: true, WebSearch: true, StructuredOutputWithWebSearch: true}
 }
 
 type input struct {
@@ -133,6 +133,7 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		return ai.Result{}, fmt.Errorf("%w: decode structured output: %v", ai.ErrInvalidResult, err)
 	}
 	result.WebSearchUsed = &webUsed
+	result.ProviderRequests = 1
 	if err := ai.Validate(req, result); err != nil {
 		return ai.Result{}, err
 	}

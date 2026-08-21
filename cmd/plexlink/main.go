@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/SleepingCat/PlexLink/internal/ai/providers/gemini"
 	"github.com/SleepingCat/PlexLink/internal/ai/providers/xai"
 	"github.com/SleepingCat/PlexLink/internal/app"
 	"github.com/SleepingCat/PlexLink/internal/config"
@@ -66,12 +67,19 @@ func run() int {
 			return 40
 		}
 		aiHTTP := &http.Client{Timeout: cfg.AITimeout()}
-		resolver, resolverErr := xai.New(xai.Config{BaseURL: cfg.AI.XAI.BaseURL, APIKey: key, Model: cfg.AI.XAI.Model, ReasoningEffort: cfg.AI.XAI.ReasoningEffort, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
+		var resolverErr error
+		switch cfg.AI.Provider {
+		case "gemini":
+			p.AI, resolverErr = gemini.New(gemini.Config{BaseURL: cfg.AI.Gemini.BaseURL, APIKey: key, Model: cfg.AI.Gemini.Model, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
+			p.AIProvider, p.AIModel = "gemini", cfg.AI.Gemini.Model
+		case "xai":
+			p.AI, resolverErr = xai.New(xai.Config{BaseURL: cfg.AI.XAI.BaseURL, APIKey: key, Model: cfg.AI.XAI.Model, ReasoningEffort: cfg.AI.XAI.ReasoningEffort, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
+			p.AIProvider, p.AIModel = "xai", cfg.AI.XAI.Model
+		}
 		if resolverErr != nil {
 			fmt.Fprintln(os.Stderr, resolverErr)
 			return 40
 		}
-		p.AI, p.AIProvider, p.AIModel = resolver, "xai", cfg.AI.XAI.Model
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

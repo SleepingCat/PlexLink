@@ -154,6 +154,8 @@ Prefer plain structs and functions elsewhere.
 - manual TMDB resolution;
 - bounded AI-assisted fallback for low-confidence cases;
 - xAI/Grok provider adapter with structured output and optional web search;
+- Gemini provider adapter using native Gemini API, with `gemini-2.5-flash` as the free-tier-first default;
+- Gemini Google Search grounded discovery plus separate strict normalization when tools and strict schema cannot be combined;
 - TMDB verification of AI hypotheses;
 - logging;
 - tests.
@@ -190,7 +192,6 @@ Do not implement unless the specification is changed:
 - X search;
 - code interpreter;
 - MCP tools;
-- Gemini adapter until the xAI adapter is stable (Gemini is the next provider task).
 
 Do not expand scope because an adjacent feature appears convenient.
 
@@ -291,7 +292,9 @@ AI proposes/interprets -> TMDB verifies -> PlexLink decides -> linker mutates
 
 AI output is untrusted data. It must never directly create paths or hardlinks.
 
-The first provider is xAI/Grok via the OpenAI-compatible Responses API. Keep provider-neutral request/result types under `internal/ai`; keep xAI-specific web-search/tool/HTTP details inside its adapter. Gemini is the next adapter and must reuse the same application-level contract.
+AI providers must reuse the same application-level contract under `internal/ai`. xAI/Grok uses its OpenAI-compatible Responses API. Gemini uses the native Gemini API because Google Search grounding and provider execution metadata are provider-specific. Keep transport/tool details inside each provider adapter.
+
+For the current personal deployment, prefer `gemini-2.5-flash` as the configurable default. With Gemini 2.5, strict structured output and built-in Google Search cannot be combined in one request. Therefore the Gemini adapter may perform grounded discovery first and a second no-tools structured-normalization request. This remains one logical resolver task and must stay bounded.
 
 Web search is allowed for difficult media-identification cases. It is deliberately bounded: no open-ended agent loop, no local tools, no X search, no code interpreter, no MCP.
 
@@ -667,7 +670,7 @@ Use:
 httptest.Server
 ```
 
-for qBittorrent and TMDB.
+for qBittorrent, TMDB, xAI, and Gemini provider HTTP behavior.
 
 Do not require live Internet for automated tests.
 

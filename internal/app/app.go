@@ -57,16 +57,17 @@ type ProcessOptions struct {
 	NoAI     bool
 }
 type AIDiagnostics struct {
-	Used            bool       `json:"ai_used"`
-	Provider        string     `json:"provider,omitempty"`
-	Model           string     `json:"model,omitempty"`
-	PromptVersion   string     `json:"prompt_version,omitempty"`
-	WebSearchPolicy string     `json:"web_search_policy,omitempty"`
-	WebSearchUsed   *bool      `json:"web_search_used,omitempty"`
-	CacheHit        bool       `json:"cache_hit"`
-	Calls           int        `json:"calls"`
-	Hypothesis      *ai.Result `json:"hypothesis,omitempty"`
-	Verified        bool       `json:"final_tmdb_verified"`
+	Used             bool       `json:"ai_used"`
+	Provider         string     `json:"provider,omitempty"`
+	Model            string     `json:"model,omitempty"`
+	PromptVersion    string     `json:"prompt_version,omitempty"`
+	WebSearchPolicy  string     `json:"web_search_policy,omitempty"`
+	WebSearchUsed    *bool      `json:"web_search_used,omitempty"`
+	CacheHit         bool       `json:"cache_hit"`
+	Calls            int        `json:"calls"`
+	ProviderRequests int        `json:"provider_requests"`
+	Hypothesis       *ai.Result `json:"hypothesis,omitempty"`
+	Verified         bool       `json:"final_tmdb_verified"`
 }
 type Result struct {
 	Torrent           model.Torrent             `json:"torrent"`
@@ -355,6 +356,7 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 	if err != nil {
 		return ai.Result{}, false, err
 	}
+	result.AI.ProviderRequests += resolved.ProviderRequests
 	if err := ai.Validate(req, resolved); err != nil {
 		return ai.Result{}, false, err
 	}

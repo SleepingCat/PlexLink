@@ -53,3 +53,18 @@ func TestLoadDoesNotDefaultAPIKeyEnvWhenLiteralKeyIsSet(t *testing.T) {
 		t.Fatalf("xAI config=%+v", cfg.AI.XAI)
 	}
 }
+
+func TestGeminiConfigDefaultsAndEnvironmentKey(t *testing.T) {
+	c := Config{QBittorrent: QBittorrent{URL: "http://qbt", Username: "user", Password: "secret"}, TMDB: TMDB{Token: "token"}, AI: AI{Enabled: true, Provider: "gemini", WebSearch: "allow", MinConfidence: .9, Timeout: "45s", MaxOutputTokens: 1200, Gemini: Gemini{BaseURL: "https://example.test/v1beta", Model: "gemini-test", APIKeyEnv: "PLEXLINK_TEST_GEMINI_KEY"}}, Paths: Paths{TVSource: "tv", MovieSource: "movies", AnimeSource: "anime", TVTarget: "ptv", MovieTarget: "pmovies", AnimeTarget: "panime"}, Matching: Matching{MinScore: 80, MinMargin: 15}, State: State{Directory: "state"}}
+	t.Setenv("PLEXLINK_TEST_GEMINI_KEY", "gemini-key")
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := c.AIKey(); err != nil || key != "gemini-key" {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+	c.AI.Gemini.APIKeyEnv = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("missing Gemini key environment name accepted")
+	}
+}
