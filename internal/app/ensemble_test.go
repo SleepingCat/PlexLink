@@ -80,20 +80,20 @@ func TestEnsembleWinnerBypassesAI(t *testing.T) {
 	}
 }
 
-func TestIMDbBridgeIsScoredOnlyAfterTMDBNormalization(t *testing.T) {
+func TestIMDbBridgeNormalizesWithoutAddingMatchEvidence(t *testing.T) {
 	candidate := ensemble.Candidate{Identity: ensemble.EntityIdentity{Kind: model.KindMovie, IMDbID: "tt0100000", Title: "Sling Blade", Year: 1996}, Evidence: []ensemble.Evidence{{Family: ensemble.FamilyTitle, Type: ensemble.EvidenceTitleExactAKA, Source: "tvmaze", Points: ensemble.PointsTitleExactAKA}}}
 	mapped, opErr := (tmdbNormalizer{metadata: ensembleMetadata{}}).Normalize(context.Background(), candidate)
 	if opErr != nil || len(mapped) != 1 || mapped[0].Identity.TMDBID != 8973 {
 		t.Fatalf("mapped=%+v err=%+v", mapped, opErr)
 	}
-	found := false
 	for _, item := range mapped[0].Evidence {
-		if item.Type == ensemble.EvidenceExternalIMDbMapsSameTMDB && item.Points == ensemble.PointsExternalIMDbMapsSameTMDB {
-			found = true
+		if item.Family == ensemble.FamilyExternalIdentity {
+			t.Fatalf("normalization bridge became match evidence: %+v", mapped[0].Evidence)
 		}
 	}
-	if !found {
-		t.Fatalf("evidence=%+v", mapped[0].Evidence)
+	decision := ensemble.Aggregate([]ensemble.ResolverResult{{Name: "tvmaze", Status: ensemble.ResolverOK, Candidates: mapped}})
+	if got := decision.Candidates[0]; got.FamilyScores[ensemble.FamilyExternalIdentity] != 0 || got.FamilyCount != 1 || got.IdentityAnchors != 0 {
+		t.Fatalf("candidate=%+v", got)
 	}
 }
 

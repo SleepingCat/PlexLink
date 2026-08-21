@@ -349,7 +349,7 @@ local parser
         ↓
 TMDB deterministic ───────┐
 OpenSubtitles fingerprint ├─ parallel
-PoiskKino (`kinopoisk`) ──┤
+Kinopoisk.dev ────────────┤
 TVMaze (TV/Anime only) ───┘
         ↓
 normalize identities to TMDB
@@ -404,7 +404,7 @@ Initial evidence families and positive caps:
 
 ```text
 FILE_IDENTITY       cap 1000
-EXTERNAL_IDENTITY   cap  900
+EXTERNAL_IDENTITY   cap  900   # source-derived identity only; catalog bridges are 0 points
 TITLE               cap  300
 TIME                cap  200
 EPISODE             cap  400
@@ -419,8 +419,9 @@ FILE_IDENTITY
   exact OpenSubtitles file hash                 +1000
 
 EXTERNAL_IDENTITY
-  independent provider -> exact TMDB identity    +900
-  independent external ID mapped to same TMDB    +800
+  explicit source-derived TMDB identity          +900
+  explicit source-derived IMDb -> same TMDB      +800
+  catalog result externalId.tmdb / IMDb bridge      0  # normalization only
 
 TITLE
   exact canonical title                          +300
@@ -435,6 +436,7 @@ TIME
   exact primary year                              +180
   plausible nearby year                            +80
   clear year contradiction                        -250
+  missing/unknown candidate year                     0
 
 EPISODE
   exact canonical episode-title match             +300
@@ -454,12 +456,17 @@ HARD CONFLICTS
   strong title contradiction                      -400
 ```
 
-Correlation rules are mandatory:
+Correlation/provenance rules are mandatory:
 
+- **identity normalization is not match evidence**: `externalId.tmdb`, `externalId.imdb`, TVMaze IMDb links, and similar IDs returned as fields of a catalog search result are bridges used to normalize that candidate to TMDB; they contribute `0` points and do not count as an evidence family or identity anchor;
+- an `EXTERNAL_IDENTITY` score is allowed only when the external ID is independently observed from source-side data (for example explicit trusted source/file metadata), not merely copied from the candidate returned by the catalog being evaluated;
+- an OpenSubtitles hash match is scored as `FILE_IDENTITY`; IDs returned by that same hash result are used for normalization and must not also add `EXTERNAL_IDENTITY`, avoiding cross-family double counting of one observation;
 - identical evidence type from several catalogs is counted once at its strongest value;
 - distinct evidence types in one family may accumulate only up to that family's positive cap;
-- source agreement bonus is `+50` per additional independent resolver supporting the same normalized TMDB candidate after the first, capped at `+200`; it never duplicates the underlying evidence;
+- source agreement bonus is `+50` per additional independent resolver supporting the same normalized TMDB candidate after the first, capped at `+200`; agreeing catalog candidates get this bonus, not an `EXTERNAL_IDENTITY` bonus;
+- missing metadata is neutral: an absent/unknown year is `0`, not `year_clear_mismatch`; `year_primary_exact` requires literal equality between source year and candidate primary year;
 - negative/hard-conflict evidence is not hidden by positive family caps;
+- differing IDs on unrelated catalog search results are merely different candidates, not an `external_identity_conflict`; that hard conflict is reserved for independently source-anchored identity evidence;
 - explicit hard conflicts can force `CONFLICT` even when the numeric total is high.
 
 Initial auto-accept rule for ensemble identity:
@@ -471,7 +478,7 @@ AND total score >= 500
 AND margin over second candidate >= 200
 ```
 
-An exact file/external identity anchor still requires at least one independent corroborating family unless two independent identity anchors agree. These thresholds are initial tuning constants and must be covered by regression tests before being made configurable.
+An exact file/source-derived-external identity anchor still requires at least one independent corroborating family unless two genuinely independent source anchors agree. Catalog-result external IDs are normalization bridges and must never increment `identity_anchors`. These thresholds are initial tuning constants and must be covered by regression tests before being made configurable.
 
 ### AI role
 

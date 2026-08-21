@@ -1,6 +1,6 @@
 # PlexLink — техническая спецификация для реализации
 
-> Revision 6 — 2026-08-21. Зафиксирована целевая архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**. TMDB/OpenSubtitles/PoiskKino/TVMaze собирают evidence параллельно, результаты нормализуются к TMDB identity, затем ранжируются числовыми баллами с caps по evidence families и hard-conflict rules. OpenRouter не является ещё одним голосом: он консультант для неоднозначных случаев. TV/Anime mapping больше не all-or-nothing: подтверждённые файлы могут линковаться независимо, а свежий эпизод с надёжной show/season context может иметь состояние `PROVISIONAL`. TMDB остаётся canonical metadata provider и финальным validator.
+> Revision 7 — 2026-08-21. Уточнена provenance-модель evidence: catalog external IDs используются для identity normalization, но сами по себе не являются match evidence. Исправлены правила TIME для missing year. Сохраняется целевая архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**. TMDB/OpenSubtitles/Kinopoisk.dev/TVMaze собирают evidence параллельно, результаты нормализуются к TMDB identity, затем ранжируются числовыми баллами с caps по evidence families и hard-conflict rules. OpenRouter не является ещё одним голосом: он консультант для неоднозначных случаев. TV/Anime mapping больше не all-or-nothing: подтверждённые файлы могут линковаться независимо, а свежий эпизод с надёжной show/season context может иметь состояние `PROVISIONAL`. TMDB остаётся canonical metadata provider и финальным validator.
 
 ## 0. Цель
 
@@ -17,7 +17,7 @@
    - определяет тип контента по исходной папке;
    - разбирает release name и имена файлов;
    - сначала пытается определить media детерминированно через TMDB;
-   - собирает evidence параллельно через Resolver Ensemble (TMDB/OpenSubtitles/PoiskKino/TVMaze where applicable);
+   - собирает evidence параллельно через Resolver Ensemble (TMDB/OpenSubtitles/Kinopoisk.dev/TVMaze where applicable);
    - при недостаточной/конфликтующей evidence может использовать OpenRouter как AI consultant;
    - после AI-гипотезы выполняет один bounded catalog requery и **обязательно повторно проверяет результат через TMDB/evidence rules**;
    - строит структуру, рекомендованную Plex;
@@ -666,7 +666,7 @@ source S01E13 → canonical S00E01
 ```text
 TMDB deterministic
 OpenSubtitles file fingerprint
-PoiskKino
+Kinopoisk.dev
 TVMaze (TV/Anime only)
 ```
 
@@ -745,6 +745,26 @@ TMDB movie ID X
 - другие external IDs → сначала безопасно связать с TMDB, если есть поддерживаемый bridge;
 - title-only candidate → TMDB search/enrichment, после чего evidence привязывается к найденному TMDB ID.
 
+Критическое правило provenance: **bridge для normalization не является match evidence**.
+
+Например Kinopoisk search может вернуть случайный candidate и одновременно корректный `externalId.tmdb` именно для этого candidate. Это доказывает только:
+
+```text
+Kinopoisk candidate X == TMDB candidate Y
+```
+
+но не доказывает:
+
+```text
+исходный torrent == candidate Y
+```
+
+Поэтому `externalId.tmdb`, `externalId.imdb`, TVMaze IMDb links и аналогичные ID, полученные как поля обычного catalog result, дают **0 points**, не увеличивают `family_count` и не являются `identity_anchor`. Они только позволяют объединить evidence разных resolvers вокруг одного canonical TMDB candidate.
+
+Если два независимых catalog resolvers после normalization выбрали один TMDB ID, это отражается через `SOURCE_AGREEMENT`, а не через `EXTERNAL_IDENTITY`.
+
+`EXTERNAL_IDENTITY` scoring разрешён только когда ID был независимо извлечён из source-side evidence, а не из metadata самого candidate. В текущем MVP такая family может оставаться редко используемой/reserved. OpenSubtitles exact hash уже является `FILE_IDENTITY`; IMDb/TMDB ID из того же hash response применяется для normalization и не должен дополнительно давать `EXTERNAL_IDENTITY`, иначе одно наблюдение будет посчитано дважды.
+
 Не создавать большой generic identity-service framework. Достаточно небольшого normalization layer вокруг существующего TMDB client.
 
 ## 8.9. Numeric evidence scoring
@@ -755,7 +775,7 @@ Evidence families и положительные caps:
 
 ```text
 FILE_IDENTITY       cap 1000
-EXTERNAL_IDENTITY   cap  900
+EXTERNAL_IDENTITY   cap  900   # только source-derived identity; catalog bridge = 0
 TITLE               cap  300
 TIME                cap  200
 EPISODE             cap  400
@@ -770,8 +790,10 @@ FILE_IDENTITY
   opensubtitles_hash_exact                         +1000
 
 EXTERNAL_IDENTITY
-  external_tmdb_exact (independent provider)        +900
-  external_imdb_maps_same_tmdb (independent)        +800
+  source_external_tmdb_verified                     +900
+  source_external_imdb_maps_same_tmdb               +800
+  catalog_external_tmdb_bridge                         0
+  catalog_external_imdb_bridge                         0
 
 TITLE
   title_exact_canonical                             +300
@@ -786,6 +808,7 @@ TIME
   year_primary_exact                                +180
   year_near_plausible                                +80
   year_clear_mismatch                               -250
+  year_missing_or_unknown                              0
 
 EPISODE
   episode_title_exact                               +300
@@ -807,11 +830,16 @@ HARD/STRONG NEGATIVE
 
 Scoring rules:
 
-1. Один и тот же `EvidenceType` из нескольких catalogs учитывается один раз по strongest value.
-2. Разные evidence types одной family могут суммироваться только до positive family cap.
-3. Agreement разных sources даёт `+50` за каждый дополнительный независимый resolver, поддерживающий тот же normalized TMDB candidate после первого, максимум `+200`; bonus не дублирует исходные баллы.
-4. Negative evidence не скрывается positive cap. Hard conflict проверяется отдельно от суммы.
-5. Evidence должен хранить `source`, `type`, `points`, safe details и candidate identity, чтобы `inspect` мог объяснить решение.
+1. Provenance важнее названия поля: external ID из обычного catalog result — это normalization bridge (`0 points`), а не доказательство совпадения torrent с candidate.
+2. Catalog bridges не увеличивают `family_count` и `identity_anchors`.
+3. OpenSubtitles exact hash даёт `FILE_IDENTITY`; IDs из того же response только нормализуют candidate и не добавляют ещё одну positive family.
+4. Один и тот же `EvidenceType` из нескольких catalogs учитывается один раз по strongest value.
+5. Разные evidence types одной family могут суммироваться только до positive family cap.
+6. Agreement разных sources даёт `+50` за каждый дополнительный независимый resolver, поддерживающий тот же normalized TMDB candidate после первого, максимум `+200`; bonus не дублирует исходные баллы.
+7. Missing metadata нейтральна: отсутствие года/нулевой год даёт `0`, а не `year_clear_mismatch`. `year_primary_exact` допустим только при `sourceYear == candidatePrimaryYear`; nearby-year logic должна использовать отдельный evidence type.
+8. Negative evidence не скрывается positive cap. Hard conflict проверяется отдельно от суммы.
+9. Разные external IDs у разных search candidates сами по себе не являются `external_identity_conflict`. Такой hard conflict допустим только для независимо source-anchored identities.
+10. Evidence должен хранить `source`, `type`, `points`, safe details и candidate identity, чтобы `inspect` мог объяснить решение.
 
 ## 8.10. Candidate acceptance
 
@@ -832,7 +860,7 @@ AND top score >= 500
 AND top score - second score >= 200
 ```
 
-Исключение для identity anchors: один `FILE_IDENTITY`/`EXTERNAL_IDENTITY` anchor не должен автоматически становиться абсолютной истиной; требуется хотя бы одна независимая corroborating family. Два независимых identity anchors, указывающих на один TMDB ID, могут быть достаточны без title evidence.
+Исключение для identity anchors: один `FILE_IDENTITY` или **source-derived** `EXTERNAL_IDENTITY` anchor не должен автоматически становиться абсолютной истиной; требуется хотя бы одна независимая corroborating family. Два действительно независимых source anchors, указывающих на один TMDB ID, могут быть достаточны без title evidence. `externalId.*` из catalog search result не считается anchor.
 
 Эти числа — initial tuning constants, а не статистически калиброванная probability model. Сначала держать их constants + regression tests; выносить в user config только после появления реальной необходимости в ручной настройке.
 
@@ -1553,7 +1581,7 @@ resolvers:
 
   kinopoisk:
     enabled: false
-    base_url: "https://api.poiskkino.dev"
+    base_url: "https://api.kinopoisk.dev/v1.4"
     api_key: ""
     api_key_env: "PLEXLINK_KINOPOISK_API_KEY"
 
@@ -2432,16 +2460,13 @@ model: openrouter/free (configurable)
 - operational failures → `ERROR`, no match → `ABSTAIN`;
 - никаких filesystem mutations.
 
-### 16B — PoiskKino resolver (`kinopoisk` config key)
+### 16B — Kinopoisk.dev resolver
 
-- base URL `https://api.poiskkino.dev` без API version;
-- `/v1.5/movie/search?query=...&limit=10`;
+- `/v1.4/movie/search?query=...`;
 - `X-API-KEY`;
-- response envelope `docs/total/limit/page/pages`, не bare array;
 - использовать names/alternative names/year/type/external IDs;
 - `externalId.tmdb`/`externalId.imdb` как identity bridges;
 - movie/tv/anime type mapping;
-- doctor проверяет optional resolver через `/v1.5/token` и не делает его outage общей ошибкой doctor;
 - возвращать common evidence, не принимать final decision.
 
 ### 16C — TVMaze resolver

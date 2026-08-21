@@ -57,8 +57,12 @@ func TestResolverSearchHeaderUnicodeBoundedAndDedupe(t *testing.T) {
 		t.Fatalf("identity = %+v", candidate.Identity)
 	}
 	assertEvidence(t, candidate, ensemble.EvidenceTitleExactLocalized)
-	assertEvidence(t, candidate, ensemble.EvidenceExternalTMDBExact)
 	assertEvidence(t, candidate, ensemble.EvidenceYearPrimaryExact)
+	for _, item := range candidate.Evidence {
+		if item.Family == ensemble.FamilyExternalIdentity {
+			t.Fatalf("catalog identity bridge became match evidence: %+v", candidate.Evidence)
+		}
+	}
 }
 
 func TestResolverMediaKindFiltering(t *testing.T) {

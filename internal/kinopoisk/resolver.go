@@ -184,9 +184,6 @@ func candidateFor(movie Movie, kind model.Kind, query string, sourceYear int) en
 	if !seenExact && bestSimilarity >= 0.85 {
 		candidate.Evidence = append(candidate.Evidence, ensemble.Evidence{Family: ensemble.FamilyTitle, Type: ensemble.EvidenceTitleFuzzyStrong, Source: resolverName, Points: ensemble.PointsTitleFuzzyStrong, SafeDetails: "title strongly matched"})
 	}
-	if movie.ExternalID.TMDB > 0 {
-		candidate.Evidence = append(candidate.Evidence, ensemble.Evidence{Family: ensemble.FamilyExternalIdentity, Type: ensemble.EvidenceExternalTMDBExact, Source: resolverName, Points: ensemble.PointsExternalTMDBExact, SafeDetails: "Kinopoisk supplied TMDB identity"})
-	}
 	if sourceYear > 0 && movie.Year > 0 {
 		switch delta := sourceYear - movie.Year; {
 		case delta == 0:

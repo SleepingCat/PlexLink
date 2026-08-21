@@ -81,7 +81,7 @@ func TestExactResultsExtractIDsDeduplicateAndPreserveConflict(t *testing.T) {
 	if got.Candidates[0].Identity.TMDBID != 11 || got.Candidates[0].Identity.IMDbID != "tt123" {
 		t.Fatalf("identity=%+v", got.Candidates[0].Identity)
 	}
-	if len(got.Candidates[0].Evidence) != 3 {
+	if len(got.Candidates[0].Evidence) != 1 {
 		t.Fatalf("evidence=%+v", got.Candidates[0].Evidence)
 	}
 	if got.Candidates[0].Evidence[0].Type != ensemble.EvidenceOpenSubtitlesHashExact || got.Candidates[0].Evidence[0].Points != 1000 {
@@ -89,6 +89,12 @@ func TestExactResultsExtractIDsDeduplicateAndPreserveConflict(t *testing.T) {
 	}
 	if got.Candidates[1].Identity.TMDBID != 22 {
 		t.Fatalf("conflicting candidate lost: %+v", got.Candidates)
+	}
+	decision := ensemble.Aggregate([]ensemble.ResolverResult{got})
+	for _, candidate := range decision.Candidates {
+		if candidate.FamilyScores[ensemble.FamilyFileIdentity] != ensemble.PointsOpenSubtitlesHashExact || candidate.FamilyScores[ensemble.FamilyExternalIdentity] != 0 || candidate.IdentityAnchors != 1 {
+			t.Fatalf("fingerprint identity was double-counted: %+v", candidate)
+		}
 	}
 }
 

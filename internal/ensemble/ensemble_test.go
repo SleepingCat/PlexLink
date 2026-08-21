@@ -134,14 +134,40 @@ func TestFingerprintNeedsIndependentCorroboration(t *testing.T) {
 	}
 }
 
-func TestTwoIndependentIdentityAnchorsSatisfyDiversity(t *testing.T) {
+func TestTwoIndependentSourceIdentityAnchorsSatisfyDiversity(t *testing.T) {
 	d := Aggregate([]ResolverResult{
-		result(1, ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "kinopoisk", 900)),
-		result(1, ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "tvmaze", 900)),
+		result(1, ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "source-metadata-a", 900)),
+		result(1, ev(FamilyExternalIdentity, EvidenceExternalTMDBExact, "source-metadata-b", 900)),
 	})
 	c := top(t, d)
 	if c.IdentityAnchors != 2 || c.FamilyCount != 1 || d.Type != DecisionMatch {
 		t.Fatalf("anchors=%d families=%d decision=%s reason=%s", c.IdentityAnchors, c.FamilyCount, d.Type, d.Reason)
+	}
+}
+
+func TestCatalogNormalizationDoesNotAddIdentityFamilyOrConflict(t *testing.T) {
+	bridge := func(name string, id int) ResolverResult {
+		return ResolverResult{Name: name, Status: ResolverOK, Candidates: []Candidate{{
+			Identity: EntityIdentity{Kind: model.KindMovie, TMDBID: id},
+			Evidence: []Evidence{{Family: FamilyExternalIdentity, Type: EvidenceExternalTMDBExact, Source: name, Points: 0}},
+		}}}
+	}
+	d := Aggregate([]ResolverResult{
+		bridge("kinopoisk", 1),
+		result(1, ev(FamilyTitle, EvidenceTitleExactCanonical, "tmdb", PointsTitleExactCanonical)),
+		bridge("kinopoisk", 2),
+		result(2, ev(FamilyTitle, EvidenceTitleFuzzyWeak, "tmdb", PointsTitleFuzzyWeak)),
+	})
+	if len(d.Candidates) != 2 {
+		t.Fatalf("candidates=%+v", d.Candidates)
+	}
+	for _, candidate := range d.Candidates {
+		if candidate.FamilyScores[FamilyExternalIdentity] != 0 || candidate.IdentityAnchors != 0 || len(candidate.HardConflicts) != 0 {
+			t.Fatalf("catalog bridge affected scoring: %+v", candidate)
+		}
+		if candidate.AgreementScore != 50 {
+			t.Fatalf("agreement=%d candidate=%+v", candidate.AgreementScore, candidate)
+		}
 	}
 }
 

@@ -170,12 +170,6 @@ func candidateFromMatch(kind model.Kind, match SearchResult, file model.MediaFil
 		detail = fmt.Sprintf("exact fingerprint for S%02dE%02d", f.Season, f.Episode)
 	}
 	evidence := []ensemble.Evidence{{Family: ensemble.FamilyFileIdentity, Type: ensemble.EvidenceOpenSubtitlesHashExact, Source: resolverName, Points: ensemble.PointsOpenSubtitlesHashExact, SafeDetails: detail}}
-	if id.TMDBID != 0 {
-		evidence = append(evidence, ensemble.Evidence{Family: ensemble.FamilyExternalIdentity, Type: ensemble.EvidenceExternalTMDBExact, Source: resolverName, Points: ensemble.PointsExternalTMDBExact, SafeDetails: "OpenSubtitles supplied TMDB identity"})
-	}
-	if id.TMDBID != 0 && id.IMDbID != "" {
-		evidence = append(evidence, ensemble.Evidence{Family: ensemble.FamilyExternalIdentity, Type: ensemble.EvidenceExternalIMDbMapsSameTMDB, Source: resolverName, Points: ensemble.PointsExternalIMDbMapsSameTMDB, SafeDetails: "OpenSubtitles supplied matching IMDb bridge"})
-	}
 	return ensemble.Candidate{Identity: id, Evidence: evidence}, true
 }
 

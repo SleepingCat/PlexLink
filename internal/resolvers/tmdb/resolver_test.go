@@ -90,6 +90,36 @@ func TestLocalizedTitleAndReleaseDateEvidence(t *testing.T) {
 	}
 }
 
+func TestMovieYearEvidenceGuards(t *testing.T) {
+	provider := fakeMetadata{movies: map[string][]model.MovieCandidate{
+		"Funny Games": {
+			{ID: 1, Title: "Funny Games", OriginalTitle: "Funny Games"},
+			{ID: 2, Title: "Funny Games", OriginalTitle: "Funny Games", ReleaseDate: "2008-01-01"},
+			{ID: 3, Title: "Funny Games", OriginalTitle: "Funny Games", ReleaseDate: "2007-01-01"},
+		},
+	}, dates: map[int]model.MovieReleaseDates{2: {}}}
+	result := New(provider).Resolve(context.Background(), ensemble.ResolveRequest{Kind: model.KindMovie, Title: "Funny Games", Year: 2007})
+	byID := make(map[int]ensemble.Candidate)
+	for _, candidate := range result.Candidates {
+		byID[candidate.Identity.TMDBID] = candidate
+	}
+	if _, ok := findEvidence(byID[1], ensemble.EvidenceYearClearMismatch); ok {
+		t.Fatalf("missing year became mismatch: %+v", byID[1].Evidence)
+	}
+	if _, ok := findEvidence(byID[1], ensemble.EvidenceYearPrimaryExact); ok {
+		t.Fatalf("missing year became exact: %+v", byID[1].Evidence)
+	}
+	if _, ok := findEvidence(byID[2], ensemble.EvidenceYearPrimaryExact); ok {
+		t.Fatalf("nearby year labeled exact: %+v", byID[2].Evidence)
+	}
+	if _, ok := findEvidence(byID[2], ensemble.EvidenceYearNearPlausible); !ok {
+		t.Fatalf("nearby year evidence missing: %+v", byID[2].Evidence)
+	}
+	if _, ok := findEvidence(byID[3], ensemble.EvidenceYearPrimaryExact); !ok {
+		t.Fatalf("exact primary year evidence missing: %+v", byID[3].Evidence)
+	}
+}
+
 func TestTVCandidatesAndEpisodeSignalsArePreserved(t *testing.T) {
 	provider := fakeMetadata{
 		tv: map[string][]model.TVCandidate{"Counterpart": {

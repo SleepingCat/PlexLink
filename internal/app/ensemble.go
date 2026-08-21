@@ -39,7 +39,6 @@ func (n tmdbNormalizer) Normalize(ctx context.Context, candidate ensemble.Candid
 				if err != nil {
 					continue
 				}
-				verified.Evidence = append(verified.Evidence, ensemble.Evidence{Family: ensemble.FamilyExternalIdentity, Type: ensemble.EvidenceExternalIMDbMapsSameTMDB, Source: evidenceSource(candidate), Points: ensemble.PointsExternalIMDbMapsSameTMDB, SafeDetails: "IMDb identity maps to verified TMDB entity"})
 				mapped = append(mapped, verified)
 			}
 			if len(mapped) > 0 {
@@ -138,13 +137,6 @@ func titleAndYearBridge(wanted string, sourceYear, candidateYear int, names ...s
 		}
 	}
 	return false
-}
-
-func evidenceSource(candidate ensemble.Candidate) string {
-	if len(candidate.Evidence) > 0 && candidate.Evidence[0].Source != "" {
-		return candidate.Evidence[0].Source
-	}
-	return "identity_normalizer"
 }
 
 func normalizeError(ctx context.Context, message string) *ensemble.OperationalError {

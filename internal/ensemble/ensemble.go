@@ -335,6 +335,11 @@ func scoreCandidate(id int, candidates []sourcedCandidate) AggregateCandidate {
 	anchorSources := make(map[string]bool)
 	for _, candidate := range candidates {
 		resolver := candidate.Resolver
+		if resolver != "" {
+			// A normalized nomination is sufficient for catalog source
+			// agreement. Its identity bridge remains score-neutral.
+			sources[resolver] = true
+		}
 		for _, evidence := range candidate.Evidence {
 			if evidence.Points <= 0 {
 				continue
