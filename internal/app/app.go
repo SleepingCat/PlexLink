@@ -354,6 +354,7 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 	result.AI.Calls++
 	resolved, err := p.AI.Resolve(ctx, req)
 	if err != nil {
+		result.AI.ProviderRequests += ai.ProviderRequestsFromError(err)
 		return ai.Result{}, false, err
 	}
 	result.AI.ProviderRequests += resolved.ProviderRequests

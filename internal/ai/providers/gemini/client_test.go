@@ -45,6 +45,13 @@ func TestNeverUsesOneStrictInteraction(t *testing.T) {
 	if result.ProviderRequests != 1 || got["model"] != "configured-model" || got["tools"] != nil || got["response_format"] == nil {
 		t.Fatalf("result=%+v request=%+v", result, got)
 	}
+	if _, exists := got["max_output_tokens"]; exists {
+		t.Fatalf("top-level max_output_tokens must be absent: %+v", got)
+	}
+	generation := got["generation_config"].(map[string]any)
+	if generation["max_output_tokens"] != float64(1200) {
+		t.Fatalf("generation_config=%+v", generation)
+	}
 }
 
 func TestSearchFlowSeparatesToolAndSchema(t *testing.T) {
@@ -131,7 +138,7 @@ func TestErrorRedactsKeyAndRetriesTransientStatus(t *testing.T) {
 	defer server.Close()
 	client, _ := New(Config{BaseURL: server.URL, APIKey: "secret-key", Model: "model"}, server.Client())
 	_, err := client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie, WebSearch: ai.WebNever})
-	if err == nil || strings.Contains(err.Error(), "secret-key") || calls.Load() != 3 {
+	if err == nil || strings.Contains(err.Error(), "secret-key") || calls.Load() != 3 || ai.ProviderRequestsFromError(err) != 3 {
 		t.Fatalf("calls=%d err=%v", calls.Load(), err)
 	}
 }

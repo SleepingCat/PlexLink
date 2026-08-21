@@ -110,6 +110,29 @@ type Result struct {
 
 var ErrInvalidResult = errors.New("invalid AI result")
 
+type ProviderRequestError struct {
+	Err      error
+	Requests int
+}
+
+func (e *ProviderRequestError) Error() string { return e.Err.Error() }
+func (e *ProviderRequestError) Unwrap() error { return e.Err }
+
+func WithProviderRequests(err error, requests int) error {
+	if err == nil || requests == 0 {
+		return err
+	}
+	return &ProviderRequestError{Err: err, Requests: requests}
+}
+
+func ProviderRequestsFromError(err error) int {
+	var providerErr *ProviderRequestError
+	if errors.As(err, &providerErr) {
+		return providerErr.Requests
+	}
+	return 0
+}
+
 func Validate(req Request, result Result) error {
 	bad := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", ErrInvalidResult, fmt.Sprintf(format, args...))

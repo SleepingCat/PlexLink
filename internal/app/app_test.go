@@ -251,12 +251,15 @@ func TestAIProviderErrorCreatesNoTarget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, name), []byte("video"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	resolver := &fakeAI{err: errors.New("provider unavailable")}
+	resolver := &fakeAI{err: ai.WithProviderRequests(errors.New("provider unavailable"), 1)}
 	cfg := config.Config{AI: config.AI{Enabled: true, WebSearch: "allow", MinConfidence: .9}, Paths: config.Paths{TVSource: filepath.Join(root, "tv"), MovieSource: source, AnimeSource: filepath.Join(root, "anime"), MovieTarget: target}, Matching: config.Matching{MinScore: 80, MinMargin: 15}, State: config.State{Directory: filepath.Join(root, "state")}}
 	p := Processor{Torrents: torrents{t: model.Torrent{Name: name, ContentPath: filepath.Join(source, name), SavePath: source, Progress: 1}, f: []model.TorrentFile{{Name: name, Priority: 1, Progress: 1}}}, Metadata: ottoMetadata{}, AI: resolver, Config: cfg}
-	_, err := p.Process(context.Background(), "unknown", false, 0)
+	result, err := p.Process(context.Background(), "unknown", false, 0)
 	if !errors.Is(err, ErrAI) {
 		t.Fatalf("err=%v", err)
+	}
+	if result.AI.ProviderRequests != 1 {
+		t.Fatalf("failed provider request was not counted: %+v", result.AI)
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
 		t.Fatal("provider error created target")
