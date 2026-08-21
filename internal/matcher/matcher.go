@@ -144,6 +144,12 @@ func scoreTitles(e model.Evidence, names ...string) int {
 	}
 	return best
 }
+
+// TitleSimilarity exposes the legacy matcher's normalized title signal for
+// evidence adapters without making its local score the ensemble score.
+func TitleSimilarity(e model.Evidence, names ...string) int {
+	return scoreTitles(e, names...)
+}
 func similarity(a, b string) int {
 	if a == "" || b == "" {
 		return 0

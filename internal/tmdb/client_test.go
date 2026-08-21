@@ -21,8 +21,15 @@ func TestClient(t *testing.T) {
 			fmt.Fprint(w, `{"results":[{"id":7,"name":"Show","original_name":"Show","first_air_date":"2020-01-01"}]}`)
 		case "/tv/7/season/1":
 			fmt.Fprint(w, `{"id":8,"season_number":1,"episodes":[{"id":9,"episode_number":1}]}`)
+		case "/tv/7/external_ids":
+			fmt.Fprint(w, `{"imdb_id":"tt123"}`)
 		case "/movie/752/release_dates":
 			fmt.Fprint(w, `{"results":[{"iso_3166_1":"US","release_dates":[{"type":1,"release_date":"2005-12-11T00:00:00.000Z"},{"type":3,"release_date":"2006-03-17T00:00:00.000Z"}]}]}`)
+		case "/find/tt0119167":
+			if r.URL.Query().Get("external_source") != "imdb_id" {
+				t.Errorf("query=%s", r.URL.RawQuery)
+			}
+			fmt.Fprint(w, `{"movie_results":[{"id":10,"title":"Funny Games","release_date":"1997-01-01"}],"tv_results":[]}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -37,11 +44,19 @@ func TestClient(t *testing.T) {
 	if err != nil || len(season.Episodes) != 1 {
 		t.Fatal(season, err)
 	}
+	external, err := c.GetTVExternalIDs(context.Background(), 7)
+	if err != nil || external.IMDbID != "tt123" {
+		t.Fatalf("external=%+v err=%v", external, err)
+	}
 	if err := c.Ping(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	dates, err := c.GetMovieReleaseDates(context.Background(), 752)
 	if err != nil || len(dates.Results) != 1 || dates.Results[0].ReleaseDates[0].Type != 1 {
 		t.Fatalf("release dates %+v %v", dates, err)
+	}
+	found, err := c.FindByIMDb(context.Background(), "tt0119167")
+	if err != nil || len(found.MovieResults) != 1 || found.MovieResults[0].ID != 10 {
+		t.Fatalf("find=%+v err=%v", found, err)
 	}
 }

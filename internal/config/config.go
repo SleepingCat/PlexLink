@@ -16,9 +16,37 @@ type Config struct {
 	QBittorrent QBittorrent `yaml:"qbittorrent"`
 	TMDB        TMDB        `yaml:"tmdb"`
 	AI          AI          `yaml:"ai"`
+	Resolvers   Resolvers   `yaml:"resolvers"`
 	Paths       Paths       `yaml:"paths"`
 	Matching    Matching    `yaml:"matching"`
 	State       State       `yaml:"state"`
+}
+
+type Resolvers struct {
+	Timeout       string        `yaml:"timeout"`
+	OpenSubtitles OpenSubtitles `yaml:"opensubtitles"`
+	Kinopoisk     Kinopoisk     `yaml:"kinopoisk"`
+	TVMaze        TVMaze        `yaml:"tvmaze"`
+}
+
+type OpenSubtitles struct {
+	Enabled             bool   `yaml:"enabled"`
+	BaseURL             string `yaml:"base_url"`
+	APIKey              string `yaml:"api_key"`
+	APIKeyEnv           string `yaml:"api_key_env"`
+	RepresentativeFiles int    `yaml:"representative_files"`
+}
+
+type Kinopoisk struct {
+	Enabled   bool   `yaml:"enabled"`
+	BaseURL   string `yaml:"base_url"`
+	APIKey    string `yaml:"api_key"`
+	APIKeyEnv string `yaml:"api_key_env"`
+}
+
+type TVMaze struct {
+	Enabled bool   `yaml:"enabled"`
+	BaseURL string `yaml:"base_url"`
 }
 
 type QBittorrent struct {
@@ -166,6 +194,27 @@ func (c *Config) defaults() {
 	if c.AI.Gemini.Model == "" {
 		c.AI.Gemini.Model = "gemini-2.5-flash"
 	}
+	if c.Resolvers.Timeout == "" {
+		c.Resolvers.Timeout = "10s"
+	}
+	if c.Resolvers.OpenSubtitles.BaseURL == "" {
+		c.Resolvers.OpenSubtitles.BaseURL = "https://api.opensubtitles.com/api/v1"
+	}
+	if c.Resolvers.OpenSubtitles.APIKey == "" && c.Resolvers.OpenSubtitles.APIKeyEnv == "" {
+		c.Resolvers.OpenSubtitles.APIKeyEnv = "PLEXLINK_OPENSUBTITLES_API_KEY"
+	}
+	if c.Resolvers.OpenSubtitles.RepresentativeFiles == 0 {
+		c.Resolvers.OpenSubtitles.RepresentativeFiles = 3
+	}
+	if c.Resolvers.Kinopoisk.BaseURL == "" {
+		c.Resolvers.Kinopoisk.BaseURL = "https://api.kinopoisk.dev/v1.4"
+	}
+	if c.Resolvers.Kinopoisk.APIKey == "" && c.Resolvers.Kinopoisk.APIKeyEnv == "" {
+		c.Resolvers.Kinopoisk.APIKeyEnv = "PLEXLINK_KINOPOISK_API_KEY"
+	}
+	if c.Resolvers.TVMaze.BaseURL == "" {
+		c.Resolvers.TVMaze.BaseURL = "https://api.tvmaze.com"
+	}
 }
 
 func (c Config) Validate() error {
@@ -207,6 +256,33 @@ func (c Config) Validate() error {
 		if _, err := time.ParseDuration(c.AI.Timeout); err != nil {
 			return fmt.Errorf("invalid config: ai.timeout: %w", err)
 		}
+	}
+	if c.Resolvers.Timeout != "" {
+		if _, err := time.ParseDuration(c.Resolvers.Timeout); err != nil {
+			return fmt.Errorf("invalid config: resolvers.timeout: %w", err)
+		}
+	}
+	if c.Resolvers.OpenSubtitles.RepresentativeFiles < 0 || (c.Resolvers.OpenSubtitles.Enabled && c.Resolvers.OpenSubtitles.RepresentativeFiles < 1) {
+		return errors.New("invalid config: resolvers.opensubtitles.representative_files must be positive")
+	}
+	if c.Resolvers.OpenSubtitles.Enabled {
+		if strings.TrimSpace(c.Resolvers.OpenSubtitles.BaseURL) == "" {
+			return errors.New("invalid config: resolvers.opensubtitles.base_url is required when enabled")
+		}
+		if strings.TrimSpace(c.Resolvers.OpenSubtitles.APIKey) == "" && strings.TrimSpace(c.Resolvers.OpenSubtitles.APIKeyEnv) == "" {
+			return errors.New("invalid config: OpenSubtitles API key is required when enabled")
+		}
+	}
+	if c.Resolvers.Kinopoisk.Enabled {
+		if strings.TrimSpace(c.Resolvers.Kinopoisk.BaseURL) == "" {
+			return errors.New("invalid config: resolvers.kinopoisk.base_url is required when enabled")
+		}
+		if strings.TrimSpace(c.Resolvers.Kinopoisk.APIKey) == "" && strings.TrimSpace(c.Resolvers.Kinopoisk.APIKeyEnv) == "" {
+			return errors.New("invalid config: Kinopoisk API key is required when enabled")
+		}
+	}
+	if c.Resolvers.TVMaze.Enabled && strings.TrimSpace(c.Resolvers.TVMaze.BaseURL) == "" {
+		return errors.New("invalid config: resolvers.tvmaze.base_url is required when enabled")
 	}
 	if c.AI.Enabled && c.AI.Provider == "xai" && (strings.TrimSpace(c.AI.XAI.BaseURL) == "" || strings.TrimSpace(c.AI.XAI.Model) == "") {
 		return errors.New("invalid config: incomplete ai.xai configuration")
@@ -272,6 +348,22 @@ func (c Config) AIKey() (string, error) {
 	return secret(c.AI.XAI.APIKeyEnv, "xAI API key")
 }
 func (c Config) AITimeout() time.Duration { d, _ := time.ParseDuration(c.AI.Timeout); return d }
+func (c Config) ResolverTimeout() time.Duration {
+	d, _ := time.ParseDuration(c.Resolvers.Timeout)
+	return d
+}
+func (c Config) OpenSubtitlesKey() (string, error) {
+	if c.Resolvers.OpenSubtitles.APIKey != "" {
+		return c.Resolvers.OpenSubtitles.APIKey, nil
+	}
+	return secret(c.Resolvers.OpenSubtitles.APIKeyEnv, "OpenSubtitles API key")
+}
+func (c Config) KinopoiskKey() (string, error) {
+	if c.Resolvers.Kinopoisk.APIKey != "" {
+		return c.Resolvers.Kinopoisk.APIKey, nil
+	}
+	return secret(c.Resolvers.Kinopoisk.APIKeyEnv, "Kinopoisk API key")
+}
 func secret(name, label string) (string, error) {
 	v := os.Getenv(name)
 	if v == "" {

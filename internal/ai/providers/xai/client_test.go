@@ -53,5 +53,19 @@ func TestRequiredWebSearchMustBeObserved(t *testing.T) {
 	client, _ := New(Config{BaseURL: server.URL, APIKey: "secret", Model: "model"}, server.Client())
 	if _, err := client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie, WebSearch: ai.WebRequire}); err == nil {
 		t.Fatal("missing web search accepted")
+	} else if ai.ProviderRequestsFromError(err) != 1 {
+		t.Fatalf("provider requests=%d, want 1", ai.ProviderRequestsFromError(err))
+	}
+}
+
+func TestHTTPFailureRetainsProviderRequestCount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client, _ := New(Config{BaseURL: server.URL, APIKey: "secret", Model: "model"}, server.Client())
+	_, err := client.Resolve(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie})
+	if err == nil || ai.ProviderRequestsFromError(err) != 1 {
+		t.Fatalf("err=%v requests=%d", err, ai.ProviderRequestsFromError(err))
 	}
 }

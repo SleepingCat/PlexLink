@@ -18,7 +18,11 @@ import (
 	"github.com/SleepingCat/PlexLink/internal/app"
 	"github.com/SleepingCat/PlexLink/internal/config"
 	"github.com/SleepingCat/PlexLink/internal/doctor"
+	"github.com/SleepingCat/PlexLink/internal/ensemble/opensubtitles"
+	"github.com/SleepingCat/PlexLink/internal/kinopoisk"
 	"github.com/SleepingCat/PlexLink/internal/qbt"
+	tmdbresolver "github.com/SleepingCat/PlexLink/internal/resolvers/tmdb"
+	"github.com/SleepingCat/PlexLink/internal/resolvers/tvmaze"
 	"github.com/SleepingCat/PlexLink/internal/tmdb"
 )
 
@@ -61,6 +65,30 @@ func run() int {
 	qc, _ := qbt.New(cfg.QBittorrent.URL, cfg.QBittorrent.Username, password, h)
 	tc := tmdb.New(cfg.TMDB.URL, token, cfg.TMDB.Language, h)
 	p := &app.Processor{Torrents: qc, Metadata: tc, Config: cfg}
+	p.Resolvers = append(p.Resolvers, tmdbresolver.New(tc))
+	resolverHTTP := &http.Client{Timeout: cfg.ResolverTimeout()}
+	if cfg.Resolvers.OpenSubtitles.Enabled {
+		key, keyErr := cfg.OpenSubtitlesKey()
+		if keyErr != nil {
+			fmt.Fprintln(os.Stderr, keyErr)
+			return 40
+		}
+		client := opensubtitles.NewClient(cfg.Resolvers.OpenSubtitles.BaseURL, key, "PlexLink/0.1", resolverHTTP)
+		p.Resolvers = append(p.Resolvers, opensubtitles.New(client, cfg.Resolvers.OpenSubtitles.RepresentativeFiles))
+	}
+	if cfg.Resolvers.Kinopoisk.Enabled {
+		key, keyErr := cfg.KinopoiskKey()
+		if keyErr != nil {
+			fmt.Fprintln(os.Stderr, keyErr)
+			return 40
+		}
+		p.Resolvers = append(p.Resolvers, kinopoisk.NewResolver(kinopoisk.NewClient(cfg.Resolvers.Kinopoisk.BaseURL, key, resolverHTTP)))
+	}
+	if cfg.Resolvers.TVMaze.Enabled {
+		tvmazeClient := tvmaze.New(cfg.Resolvers.TVMaze.BaseURL, resolverHTTP)
+		p.Resolvers = append(p.Resolvers, tvmaze.NewResolver(tvmazeClient))
+		p.EpisodeCatalog = app.NewTVMazeEpisodeCatalog(tc, tvmazeClient)
+	}
 	if cfg.AI.Enabled {
 		key, keyErr := cfg.AIKey()
 		if keyErr != nil {
@@ -99,6 +127,9 @@ func run() int {
 		if err := doctor.Filesystems(cfg.Paths); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 50
+		}
+		for _, diagnostic := range doctor.ResolverConfiguration(cfg.Resolvers) {
+			fmt.Println(diagnostic)
 		}
 		fmt.Println("OK: configuration, qBittorrent, TMDB and hardlink probes")
 		return 0

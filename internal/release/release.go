@@ -25,6 +25,10 @@ func IsMedia(name string) bool {
 	return mediaExt[strings.ToLower(filepath.Ext(name))] && !ignored.MatchString(name)
 }
 
+func IsIgnored(name string) bool {
+	return mediaExt[strings.ToLower(filepath.Ext(name))] && ignored.MatchString(name)
+}
+
 func Parse(torrent model.Torrent, files []model.TorrentFile, kind model.Kind) (model.Evidence, []model.MediaFile) {
 	e := model.Evidence{}
 	add := func(name string, weight int) *torrentname.TorrentInfo {

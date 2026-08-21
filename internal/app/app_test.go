@@ -213,8 +213,11 @@ func TestAIFallbackSearchesTMDBAndVerifiesMovieYear(t *testing.T) {
 		t.Fatalf("external evidence leaked absolute path: %+v", resolver.requests)
 	}
 	result, err = p.Process(context.Background(), "otto", true, 0)
-	if err != nil || !result.AI.CacheHit || resolver.calls != 1 {
+	if err != nil || result.AI.CacheHit || resolver.calls != 2 {
 		t.Fatalf("cache result=%+v calls=%d err=%v", result.AI, resolver.calls, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(cfg.State.Directory, "ai-cache")); !os.IsNotExist(statErr) {
+		t.Fatalf("AI dry-run mutated cache: %v", statErr)
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
 		t.Fatal("AI dry-run mutated target")

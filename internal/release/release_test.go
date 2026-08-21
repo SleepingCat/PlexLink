@@ -1,9 +1,39 @@
 package release
 
 import (
-	"github.com/SleepingCat/PlexLink/internal/model"
+	"encoding/json"
+	"os"
 	"testing"
+
+	"github.com/SleepingCat/PlexLink/internal/model"
 )
+
+func TestRequiredLongTailFixturesAreRetained(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/releases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []string
+	if err := json.Unmarshal(data, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	present := make(map[string]bool, len(fixtures))
+	for _, fixture := range fixtures {
+		present[fixture] = true
+	}
+	for _, required := range []string{
+		"Counterpart 2 - LostFilm.TV [MP4]",
+		"The.Devils.Hour.S01.1080p.WEB-DL",
+		"BoJack Horseman (1080p WEB-DL)",
+		"V.for.Vendetta.2005.1080p.BluRay.RusEngDTS.HDCLUB.mkv",
+		"Забавные Игры (2007) BDRip-AVC by NewAVC.mkv",
+		"Ottochennoe.Lezvie.1996.RUS.HDRip.avi",
+	} {
+		if !present[required] {
+			t.Errorf("required regression fixture %q is missing", required)
+		}
+	}
+}
 
 func TestParseRegressionNames(t *testing.T) {
 	cases := []struct {

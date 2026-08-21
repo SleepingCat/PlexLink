@@ -31,6 +31,20 @@ ai:
     api_key_env: "PLEXLINK_GEMINI_API_KEY"
     # Alternative for a local gitignored config: api_key: "change-me"
     model: "gemini-2.5-flash"
+resolvers:
+  timeout: "10s"
+  opensubtitles:
+    enabled: false
+    base_url: "https://api.opensubtitles.com/api/v1"
+    api_key_env: "PLEXLINK_OPENSUBTITLES_API_KEY"
+    representative_files: 3
+  kinopoisk:
+    enabled: false
+    base_url: "https://api.kinopoisk.dev/v1.4"
+    api_key_env: "PLEXLINK_KINOPOISK_API_KEY"
+  tvmaze:
+    enabled: true
+    base_url: "https://api.tvmaze.com"
 paths:
   tv_source: "K:\\video\\serials"
   movie_source: "K:\\video\\films"

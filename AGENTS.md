@@ -282,7 +282,7 @@ Search input may be any language.
 
 ## AI Resolver
 
-Use AI only as a bounded fallback after deterministic parsing/TMDB matching is not confident enough. Do not call AI for already high-confidence matches.
+Use AI as a bounded consultant after deterministic/ensemble evidence is insufficient or conflicting. Until Resolver Ensemble is merged, the existing deterministic-TMDB fallback path may remain, but the target architecture must not call AI when non-AI evidence already yields a safe high-confidence decision.
 
 Core rule:
 
@@ -338,13 +338,169 @@ Project-specific normalization should remain small, explicit, and covered by tes
 
 ---
 
-## Resolver Ensemble (next architecture stage)
+## Resolver Ensemble + Evidence Aggregator
 
-After the OpenRouter adapter is proven with a real API request, the next resolver architecture should aggregate evidence from independent resolvers (OpenSubtitles hash, deterministic TMDB, Kinopoisk.dev, TVMaze for TV) rather than form a long fallback chain.
+After the OpenRouter adapter is proven, the target resolver architecture is a **parallel Resolver Ensemble**, not a fallback chain:
 
-Do not implement naïve majority voting. Weight evidence by type/strength and distinguish `MATCH`, `NO_MATCH`, `ABSTAIN`, and `ERROR`. A strong exact-file fingerprint may outweigh several correlated fuzzy-title guesses. Final accepted identity must still be verified through TMDB.
+```text
+qBittorrent/files
+        ↓
+local parser
+        ↓
+TMDB deterministic ───────┐
+OpenSubtitles fingerprint ├─ parallel
+Kinopoisk.dev ────────────┤
+TVMaze (TV/Anime only) ───┘
+        ↓
+normalize identities to TMDB
+        ↓
+Evidence Aggregator
+        ↓
+decisive? ─ yes → final TMDB validation
+    │
+    no / conflict
+    ↓
+OpenRouter consultant
+    ↓
+new hypothesis → TMDB/evidence validation
+```
 
-Do not mix this ensemble refactor into the OpenRouter adapter change.
+Do **not** use majority voting. Resolver count is not confidence. Three correlated fuzzy-title matches must not automatically beat one exact file fingerprint.
+
+Resolver execution rules:
+
+- applicable resolvers run concurrently;
+- one resolver failure must not cancel the others;
+- `OK` means useful candidates/evidence were returned;
+- `ABSTAIN` means not applicable or no useful evidence;
+- `ERROR` means an operational failure;
+- lack of a candidate is not negative evidence by itself;
+- do not create a `NO_MATCH` vote merely because one catalog returned zero results.
+
+### Degraded-source operation
+
+External resolver/catalog/AI APIs are optional evidence sources and must fail independently.
+
+If an optional source times out, returns `429`, `5xx`, auth/config error, malformed/changed response, or any other operational error:
+
+- record that source as `ERROR`;
+- retain a bounded safe diagnostic/warning;
+- give it **zero positive and zero negative evidence points**;
+- exclude it from source-agreement bonuses and from any provider-count/quorum calculation;
+- continue scoring with every other successful source;
+- never lower a candidate score merely because an expected provider did not answer.
+
+Acceptance is based on the **available evidence**, family caps, margin, and hard-conflict rules. There is no requirement that a fixed number of providers respond.
+
+Persistent provider failures should be visible in `doctor`, but an optional provider outage must not make normal processing unavailable when the remaining evidence is sufficient.
+
+TMDB has one special role: it is the canonical metadata/final-validation source. A TMDB resolver/search failure during the ensemble is handled like any other resolver failure, but PlexLink must not create a new canonical target that requires fresh TMDB verification if TMDB is unavailable and no previously verified/cached canonical metadata exists. Previously accepted verified state may be reused safely during a temporary TMDB outage.
+
+### Numeric evidence scoring
+
+Evidence uses **points for ranking**, not probabilities. Do not describe a score such as `1420` as `95% probability`. Final acceptance uses score, margin, evidence-family diversity, and hard-conflict rules.
+
+Initial evidence families and positive caps:
+
+```text
+FILE_IDENTITY       cap 1000
+EXTERNAL_IDENTITY   cap  900
+TITLE               cap  300
+TIME                cap  200
+EPISODE             cap  400
+CONTEXT             cap  300
+SOURCE_AGREEMENT    cap  200
+```
+
+Initial point scale:
+
+```text
+FILE_IDENTITY
+  exact OpenSubtitles file hash                 +1000
+
+EXTERNAL_IDENTITY
+  independent provider -> exact TMDB identity    +900
+  independent external ID mapped to same TMDB    +800
+
+TITLE
+  exact canonical title                          +300
+  exact localized title                          +300
+  exact AKA/alternative title                     +280
+  strong transliteration bridge                   +220
+  strong fuzzy title                              +100
+  weak fuzzy/substring                             +20
+
+TIME
+  source year confirmed by actual release date    +200
+  exact primary year                              +180
+  plausible nearby year                            +80
+  clear year contradiction                        -250
+
+EPISODE
+  exact canonical episode-title match             +300
+  parsed SxxExx exists                             +200
+  season exists                                    +100
+  pack/episode-range consistency                   +100
+
+CONTEXT
+  strong sibling-file/show consensus              +250
+  same-season context                              +150
+  same release/naming pattern                      +100
+
+HARD CONFLICTS
+  external identity contradiction                -1200
+  wrong media kind                               -1000
+  file fingerprint points to another identity    -1000
+  strong title contradiction                      -400
+```
+
+Correlation rules are mandatory:
+
+- identical evidence type from several catalogs is counted once at its strongest value;
+- distinct evidence types in one family may accumulate only up to that family's positive cap;
+- source agreement bonus is `+50` per additional independent resolver supporting the same normalized TMDB candidate after the first, capped at `+200`; it never duplicates the underlying evidence;
+- negative/hard-conflict evidence is not hidden by positive family caps;
+- explicit hard conflicts can force `CONFLICT` even when the numeric total is high.
+
+Initial auto-accept rule for ensemble identity:
+
+```text
+no hard conflict
+AND evidence from at least 2 independent families
+AND total score >= 500
+AND margin over second candidate >= 200
+```
+
+An exact file/external identity anchor still requires at least one independent corroborating family unless two independent identity anchors agree. These thresholds are initial tuning constants and must be covered by regression tests before being made configurable.
+
+### AI role
+
+OpenRouter is **not another independent vote**. It is a consultant used when the aggregator is ambiguous or conflicting. AI may interpret transliteration/noisy naming or propose a new title/year/mapping hypothesis, but the hypothesis must re-enter deterministic catalog validation. AI confidence itself adds no identity points. A successful AI hypothesis may seed **one bounded second catalog pass** (TMDB/Kinopoisk/TVMaze where applicable) using the proposed titles/year; then the new catalog evidence is aggregated normally. Do not create an open-ended resolver↔AI loop, and do not rerun file fingerprinting unless the input file set changed.
+
+### TV/Anime: show identity and file mapping are separate
+
+Do not make the whole torrent all-or-nothing because one episode is missing from a metadata catalog. Once the show identity is accepted, map files independently. File states:
+
+```text
+RESOLVED      canonical season/episode is verified
+PROVISIONAL   show is confidently known and source SxxExx is unambiguous,
+              but the canonical episode is not yet present/verified
+UNRESOLVED    file cannot be mapped safely
+IGNORED       sample/trailer/extra/non-media according to policy
+```
+
+A missing TMDB episode is **absence of evidence**, not strong negative evidence. A common fresh-episode case such as `11 RESOLVED + 1 new SxxExx not yet in TMDB` should become `RESOLVED_WITH_WARNINGS`, with the new episode linked provisionally when all of these hold:
+
+- show identity is already accepted;
+- parsed season/episode is unambiguous;
+- sibling files strongly agree on the same show (для pack: минимум 2 подтверждённых sibling files и не менее 70% распознанных media files указывают на тот же show);
+- same-season/release context is consistent;
+- no hard conflicting evidence exists;
+- target path does not conflict with another source.
+
+An `UNRESOLVED` file must not hide or block other safely resolved files. Prefer partial availability in Plex over withholding an otherwise valid season. Preserve diagnostics so a false-positive extra file can be corrected later.
+
+Do not mix the Resolver Ensemble refactor into the OpenRouter adapter change. Implement the ensemble in staged tasks with shared contracts merged before provider-specific resolver tasks are run in parallel.
 
 ---
 

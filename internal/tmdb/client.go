@@ -75,10 +75,20 @@ func (c *Client) SearchMovie(ctx context.Context, q string) ([]model.MovieCandid
 	err := c.get(ctx, "/search/movie?query="+url.QueryEscape(q)+"&language="+url.QueryEscape(c.language), &r)
 	return r.Results, err
 }
+func (c *Client) FindByIMDb(ctx context.Context, imdbID string) (model.ExternalFindResult, error) {
+	var result model.ExternalFindResult
+	err := c.get(ctx, "/find/"+url.PathEscape(imdbID)+"?external_source=imdb_id&language="+url.QueryEscape(c.language), &result)
+	return result, err
+}
 func (c *Client) GetTV(ctx context.Context, id int) (model.TVShow, error) {
 	var r model.TVShow
 	err := c.get(ctx, "/tv/"+strconv.Itoa(id)+"?language="+url.QueryEscape(c.language), &r)
 	return r, err
+}
+func (c *Client) GetTVExternalIDs(ctx context.Context, id int) (model.TVExternalIDs, error) {
+	var result model.TVExternalIDs
+	err := c.get(ctx, "/tv/"+strconv.Itoa(id)+"/external_ids", &result)
+	return result, err
 }
 func (c *Client) GetSeason(ctx context.Context, id, season int) (model.Season, error) {
 	var r model.Season

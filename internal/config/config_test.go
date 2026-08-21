@@ -140,3 +140,30 @@ func TestOpenRouterLiteralKeyDoesNotGainEnvironmentDefault(t *testing.T) {
 		t.Fatal("simultaneous OpenRouter literal and environment key accepted")
 	}
 }
+
+func TestResolverDefaultsAndDisabledKeysAreOptional(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\ntmdb:\n  token: token\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resolvers.Timeout != "10s" || cfg.Resolvers.OpenSubtitles.RepresentativeFiles != 3 || cfg.Resolvers.OpenSubtitles.BaseURL != "https://api.opensubtitles.com/api/v1" || cfg.Resolvers.Kinopoisk.BaseURL != "https://api.kinopoisk.dev/v1.4" || cfg.Resolvers.TVMaze.BaseURL != "https://api.tvmaze.com" {
+		t.Fatalf("resolver defaults=%+v", cfg.Resolvers)
+	}
+}
+
+func TestResolverDirectKeyTakesPrecedenceOverEnvironmentReference(t *testing.T) {
+	c := Config{Resolvers: Resolvers{OpenSubtitles: OpenSubtitles{APIKey: "direct", APIKeyEnv: "PLEXLINK_TEST_OS_KEY"}, Kinopoisk: Kinopoisk{APIKey: "direct-kp", APIKeyEnv: "PLEXLINK_TEST_KP_KEY"}}}
+	t.Setenv("PLEXLINK_TEST_OS_KEY", "environment")
+	t.Setenv("PLEXLINK_TEST_KP_KEY", "environment-kp")
+	if key, err := c.OpenSubtitlesKey(); err != nil || key != "direct" {
+		t.Fatalf("OpenSubtitles key=%q err=%v", key, err)
+	}
+	if key, err := c.KinopoiskKey(); err != nil || key != "direct-kp" {
+		t.Fatalf("Kinopoisk key=%q err=%v", key, err)
+	}
+}

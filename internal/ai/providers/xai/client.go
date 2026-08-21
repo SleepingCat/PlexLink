@@ -94,19 +94,19 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		return r, e
 	})
 	if err != nil {
-		return ai.Result{}, fmt.Errorf("xAI request: %w", err)
+		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("xAI request: %w", err), 1)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return ai.Result{}, fmt.Errorf("xAI API status %d", resp.StatusCode)
+		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("xAI API status %d", resp.StatusCode), 1)
 	}
 	var wire response
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&wire); err != nil {
-		return ai.Result{}, fmt.Errorf("decode xAI response: %w", err)
+		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("decode xAI response: %w", err), 1)
 	}
 	if wire.Status != "completed" {
-		return ai.Result{}, fmt.Errorf("xAI response status %q", wire.Status)
+		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("xAI response status %q", wire.Status), 1)
 	}
 	webUsed := false
 	var output string
@@ -123,19 +123,19 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		}
 	}
 	if req.WebSearch == ai.WebRequire && !webUsed {
-		return ai.Result{}, fmt.Errorf("%w: required web search was not used", ai.ErrInvalidResult)
+		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: required web search was not used", ai.ErrInvalidResult), 1)
 	}
 	if output == "" {
-		return ai.Result{}, fmt.Errorf("%w: xAI returned no output_text", ai.ErrInvalidResult)
+		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: xAI returned no output_text", ai.ErrInvalidResult), 1)
 	}
 	var result ai.Result
 	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		return ai.Result{}, fmt.Errorf("%w: decode structured output: %v", ai.ErrInvalidResult, err)
+		return ai.Result{}, ai.WithProviderRequests(fmt.Errorf("%w: decode structured output: %v", ai.ErrInvalidResult, err), 1)
 	}
 	result.WebSearchUsed = &webUsed
 	result.ProviderRequests = 1
 	if err := ai.Validate(req, result); err != nil {
-		return ai.Result{}, err
+		return ai.Result{}, ai.WithProviderRequests(err, 1)
 	}
 	return result, nil
 }

@@ -9,6 +9,15 @@ import (
 	"github.com/SleepingCat/PlexLink/internal/model"
 )
 
+func ResolverConfiguration(cfg config.Resolvers) []string {
+	return []string{
+		fmt.Sprintf("resolver opensubtitles: enabled=%t", cfg.OpenSubtitles.Enabled),
+		fmt.Sprintf("resolver kinopoisk: enabled=%t", cfg.Kinopoisk.Enabled),
+		fmt.Sprintf("resolver tvmaze: enabled=%t", cfg.TVMaze.Enabled),
+		"resolver tmdb: enabled=true (canonical)",
+	}
+}
+
 func Filesystems(paths config.Paths) error {
 	for _, kind := range []model.Kind{model.KindTV, model.KindMovie, model.KindAnime} {
 		source, target := paths.Roots(kind)
