@@ -30,18 +30,19 @@ func TV(ctx context.Context, p TVMetadata, e model.Evidence, candidates []model.
 		b = append(b, fmt.Sprintf("year=%d", ys))
 		valid := true
 		bySeason := episodesBySeason(e.Episodes)
-		for season, eps := range bySeason {
+		for _, season := range sortedSeasons(bySeason) {
+			eps := bySeason[season]
 			if season == 0 {
 				continue
 			}
 			detail, err := p.GetSeason(ctx, c.ID, season)
 			if err != nil {
 				valid = false
-				b = append(b, "season=missing")
+				b = append(b, fmt.Sprintf("season_%02d=0", season))
 				continue
 			}
 			s += 15
-			b = append(b, "season=15")
+			b = append(b, fmt.Sprintf("season_%02d=15", season))
 			exists := map[int]bool{}
 			for _, ep := range detail.Episodes {
 				exists[ep.EpisodeNumber] = true
@@ -49,8 +50,10 @@ func TV(ctx context.Context, p TVMetadata, e model.Evidence, candidates []model.
 			for _, n := range representatives(eps) {
 				if exists[n] {
 					s += 5
+					b = append(b, fmt.Sprintf("episode_S%02dE%02d=5", season, n))
 				} else {
 					s -= 30
+					b = append(b, fmt.Sprintf("episode_S%02dE%02d=-30", season, n))
 					valid = false
 				}
 			}
@@ -79,9 +82,12 @@ func TV(ctx context.Context, p TVMetadata, e model.Evidence, candidates []model.
 func Movie(e model.Evidence, candidates []model.MovieCandidate, minScore, minMargin int) (model.Match, []model.Match) {
 	var all []model.Match
 	for _, c := range candidates {
-		s := scoreTitles(e, c.Title, c.OriginalTitle)
-		s += yearScore(e.Year, yearOf(c.ReleaseDate), 30, -40)
-		all = append(all, model.Match{ID: c.ID, Name: c.Title, Year: yearOf(c.ReleaseDate), Score: s})
+		titleScore := scoreTitles(e, c.Title, c.OriginalTitle)
+		year := yearOf(c.ReleaseDate)
+		yearContribution := yearScore(e.Year, year, 30, -40)
+		s := titleScore + yearContribution
+		breakdown := []string{fmt.Sprintf("title=%d", titleScore), fmt.Sprintf("year=%d", yearContribution)}
+		all = append(all, model.Match{ID: c.ID, Name: c.Title, Year: year, Score: s, Breakdown: breakdown})
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Score > all[j].Score })
 	if len(all) == 0 {
@@ -176,6 +182,14 @@ func episodesBySeason(in []model.EpisodeRef) map[int][]int {
 		}
 	}
 	return m
+}
+func sortedSeasons(bySeason map[int][]int) []int {
+	seasons := make([]int, 0, len(bySeason))
+	for season := range bySeason {
+		seasons = append(seasons, season)
+	}
+	sort.Ints(seasons)
+	return seasons
 }
 func representatives(in []int) []int {
 	sort.Ints(in)
