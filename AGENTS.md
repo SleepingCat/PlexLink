@@ -528,6 +528,8 @@ config.yaml
 
 Secrets should be referenced via environment variables.
 
+Every AI provider adapter must support an `api_key` setting in `config.yaml` by default.
+
 Do not introduce Viper or similar configuration frameworks unless necessary.
 
 Use:

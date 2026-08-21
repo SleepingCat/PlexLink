@@ -58,6 +58,7 @@ type XAI struct {
 type Gemini struct {
 	BaseURL   string `yaml:"base_url"`
 	APIKeyEnv string `yaml:"api_key_env"`
+	APIKey    string `yaml:"api_key"`
 	Model     string `yaml:"model"`
 }
 
@@ -138,7 +139,7 @@ func (c *Config) defaults() {
 	if c.AI.Gemini.BaseURL == "" {
 		c.AI.Gemini.BaseURL = "https://generativelanguage.googleapis.com/v1beta"
 	}
-	if c.AI.Gemini.APIKeyEnv == "" {
+	if c.AI.Gemini.APIKeyEnv == "" && c.AI.Gemini.APIKey == "" {
 		c.AI.Gemini.APIKeyEnv = "PLEXLINK_GEMINI_API_KEY"
 	}
 	if c.AI.Gemini.Model == "" {
@@ -192,8 +193,11 @@ func (c Config) Validate() error {
 	if c.AI.Enabled && c.AI.Provider == "xai" && (strings.TrimSpace(c.AI.XAI.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.XAI.APIKey) == "") {
 		return errors.New("invalid config: set exactly one of ai.xai.api_key_env or ai.xai.api_key")
 	}
-	if c.AI.Enabled && c.AI.Provider == "gemini" && (strings.TrimSpace(c.AI.Gemini.BaseURL) == "" || strings.TrimSpace(c.AI.Gemini.Model) == "" || strings.TrimSpace(c.AI.Gemini.APIKeyEnv) == "") {
-		return errors.New("invalid config: incomplete ai.gemini configuration; api_key_env is required")
+	if c.AI.Enabled && c.AI.Provider == "gemini" && (strings.TrimSpace(c.AI.Gemini.BaseURL) == "" || strings.TrimSpace(c.AI.Gemini.Model) == "") {
+		return errors.New("invalid config: incomplete ai.gemini configuration")
+	}
+	if c.AI.Enabled && c.AI.Provider == "gemini" && (strings.TrimSpace(c.AI.Gemini.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.Gemini.APIKey) == "") {
+		return errors.New("invalid config: set exactly one of ai.gemini.api_key_env or ai.gemini.api_key")
 	}
 	return nil
 }
@@ -212,6 +216,9 @@ func (c Config) Token() (string, error) {
 }
 func (c Config) AIKey() (string, error) {
 	if c.AI.Provider == "gemini" {
+		if c.AI.Gemini.APIKey != "" {
+			return c.AI.Gemini.APIKey, nil
+		}
 		return secret(c.AI.Gemini.APIKeyEnv, "Gemini API key")
 	}
 	if c.AI.XAI.APIKey != "" {

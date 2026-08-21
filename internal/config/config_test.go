@@ -65,6 +65,32 @@ func TestGeminiConfigDefaultsAndEnvironmentKey(t *testing.T) {
 	}
 	c.AI.Gemini.APIKeyEnv = ""
 	if err := c.Validate(); err == nil {
-		t.Fatal("missing Gemini key environment name accepted")
+		t.Fatal("missing Gemini key accepted")
+	}
+	c.AI.Gemini.APIKey = "literal-key"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("literal Gemini key rejected: %v", err)
+	}
+	if key, err := c.AIKey(); err != nil || key != "literal-key" {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+	c.AI.Gemini.APIKeyEnv = "PLEXLINK_TEST_GEMINI_KEY"
+	if err := c.Validate(); err == nil {
+		t.Fatal("simultaneous literal and environment Gemini key accepted")
+	}
+}
+
+func TestLoadDoesNotDefaultGeminiAPIKeyEnvWhenLiteralKeyIsSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\ntmdb:\n  token: token\nai:\n  enabled: true\n  provider: gemini\n  gemini:\n    api_key: literal-key\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AI.Gemini.APIKeyEnv != "" || cfg.AI.Gemini.APIKey != "literal-key" {
+		t.Fatalf("Gemini config=%+v", cfg.AI.Gemini)
 	}
 }

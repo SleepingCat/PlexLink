@@ -23,6 +23,7 @@ ai:
   gemini:
     base_url: "https://generativelanguage.googleapis.com/v1beta"
     api_key_env: "PLEXLINK_GEMINI_API_KEY"
+    # Alternative for a local gitignored config: api_key: "change-me"
     model: "gemini-2.5-flash"
 paths:
   tv_source: "K:\\video\\serials"
