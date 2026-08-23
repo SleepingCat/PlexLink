@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SleepingCat/PlexLink/internal/ai"
 	"github.com/SleepingCat/PlexLink/internal/config"
 	"github.com/SleepingCat/PlexLink/internal/ensemble"
 	"github.com/SleepingCat/PlexLink/internal/linker"
@@ -78,11 +79,82 @@ func TestFreshEpisodeBecomesProvisionalAndAllFilesArePlanned(t *testing.T) {
 		t.Fatalf("plan=%d status=%s err=%v mappings=%+v", len(result.Plan), result.MappingStatus, err, result.EpisodeValidation)
 	}
 	last := result.EpisodeValidation[11]
-	if last.State != model.EpisodeProvisional || last.ContextScore != ensemble.FamilyCap(ensemble.FamilyContext) || last.Season != 2 || last.Episode != 12 {
+	if last.State != model.EpisodeProvisional || last.CanonicalVerified || last.ContextScore != ensemble.FamilyCap(ensemble.FamilyContext) || last.Season != 2 || last.Episode != 12 {
 		t.Fatalf("last=%+v", last)
+	}
+	for _, want := range []string{"accepted_show_identity", "same_torrent", "same_season_context", "sibling_files_same_show_strong", "source_episode_number_unambiguous"} {
+		if !containsString(last.ContextEvidence, want) {
+			t.Fatalf("context evidence %v does not contain %q", last.ContextEvidence, want)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "target")); !os.IsNotExist(err) {
 		t.Fatal("dry-run mutated target filesystem")
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestOptionalAIFailuresDoNotDowngradeProvisionalPack(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "timeout", err: context.DeadlineExceeded},
+		{name: "rate limit", err: &ai.ProviderHTTPError{Provider: "openrouter", StatusCode: 429, ErrorCode: "rate_limit"}},
+		{name: "server failure", err: &ai.ProviderHTTPError{Provider: "openrouter", StatusCode: 503, ErrorCode: "upstream_error"}},
+		{name: "malformed output", err: errors.New("invalid structured output")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, _ := freshPackProcessor(t, 12, "")
+			p.Config.AI = config.AI{Enabled: true, MinConfidence: .9}
+			p.AI, p.AIProvider, p.AIModel = &fakeAI{err: tt.err}, "openrouter", "openrouter/free"
+			result, err := p.Process(context.Background(), "ai-degraded", true, 7)
+			if err != nil || len(result.Plan) != 12 || result.MappingStatus != model.MappingResolvedWithWarnings || result.EpisodeValidation[11].State != model.EpisodeProvisional {
+				t.Fatalf("plan=%d status=%s mapping=%+v err=%v", len(result.Plan), result.MappingStatus, result.EpisodeValidation[11], err)
+			}
+			if result.AI.Error != "AI episode enrichment unavailable" {
+				t.Fatalf("AI diagnostics=%+v", result.AI)
+			}
+		})
+	}
+}
+
+func TestTopLevelCancellationStillAbortsAIEnrichment(t *testing.T) {
+	p, _ := freshPackProcessor(t, 12, "")
+	p.Config.AI = config.AI{Enabled: true, MinConfidence: .9}
+	p.AI = &fakeAI{err: context.Canceled}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := p.Process(ctx, "canceled", true, 7)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v, want context.Canceled", err)
+	}
+}
+
+func TestDuplicateProvisionalTargetsAreExcludedWhileSafeSiblingsRemainPlanned(t *testing.T) {
+	p, _ := freshPackProcessor(t, 12, "")
+	duplicateName := filepath.Join("copy", "Fresh.Show.S02E12.mkv")
+	source := p.Config.Paths.TVSource
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(source, duplicateName)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, duplicateName), []byte("duplicate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	torrentClient := p.Torrents.(torrents)
+	torrentClient.f = append(torrentClient.f, model.TorrentFile{Name: duplicateName, Priority: 1, Progress: 1})
+	p.Torrents = torrentClient
+	result, err := p.Process(context.Background(), "duplicate", true, 7)
+	if !errors.Is(err, ErrConflict) || result.MappingStatus != model.MappingConflict || len(result.Plan) != 11 {
+		t.Fatalf("plan=%d status=%s err=%v mappings=%+v", len(result.Plan), result.MappingStatus, err, result.EpisodeValidation)
 	}
 }
 

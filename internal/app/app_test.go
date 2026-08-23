@@ -260,8 +260,8 @@ func TestAIProviderErrorCreatesNoTarget(t *testing.T) {
 	cfg := config.Config{AI: config.AI{Enabled: true, WebSearch: "allow", MinConfidence: .9}, Paths: config.Paths{TVSource: filepath.Join(root, "tv"), MovieSource: source, AnimeSource: filepath.Join(root, "anime"), MovieTarget: target}, Matching: config.Matching{MinScore: 80, MinMargin: 15}, State: config.State{Directory: filepath.Join(root, "state")}}
 	p := Processor{Torrents: torrents{t: model.Torrent{Name: name, ContentPath: filepath.Join(source, name), SavePath: source, Progress: 1}, f: []model.TorrentFile{{Name: name, Priority: 1, Progress: 1}}}, Metadata: ottoMetadata{}, AI: resolver, Config: cfg}
 	result, err := p.Process(context.Background(), "unknown", false, 0)
-	if !errors.Is(err, ErrAI) {
-		t.Fatalf("err=%v", err)
+	if !errors.Is(err, ErrUnresolved) || result.AI.Error != "AI consultant unavailable" {
+		t.Fatalf("err=%v diagnostics=%+v", err, result.AI)
 	}
 	if result.AI.ProviderRequests != 1 {
 		t.Fatalf("failed provider request was not counted: %+v", result.AI)

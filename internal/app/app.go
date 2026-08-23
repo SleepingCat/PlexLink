@@ -186,6 +186,10 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 	}
 	if !useEnsemble && errors.Is(err, ErrUnresolved) && manualID == 0 && !options.NoAI && p.Config.AI.Enabled {
 		match, show, err = p.resolveAI(ctx, kind, t.Name, media, e, &r)
+		if errors.Is(err, ErrAI) && ctx.Err() == nil {
+			r.AI.Error = "AI consultant unavailable"
+			err = ErrUnresolved
+		}
 	}
 	if err != nil {
 		if errors.Is(err, ErrUnresolved) || errors.Is(err, ErrAnimeNumbering) {
@@ -206,15 +210,18 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 		}
 	}
 	if kind != model.KindMovie {
-		validations, valid := p.validateEpisodesForKind(ctx, kind, match.ID, media)
+		validations, _ := p.validateEpisodesForKind(ctx, kind, match.ID, media)
 		r.EpisodeValidation = validations
-		if !valid && hasUnresolvedMappings(validations) && !options.NoAI && p.Config.AI.Enabled {
+		if hasNonCanonicalMappings(validations) && !options.NoAI && p.Config.AI.Enabled {
 			if mapErr := p.resolveAIEpisodes(ctx, kind, t.Name, match.ID, media, e, &r); mapErr != nil {
+				if ctx.Err() != nil {
+					return r, ctx.Err()
+				}
 				if !errors.Is(mapErr, ErrUnresolved) {
-					return r, mapErr
+					r.AI.Error = "AI episode enrichment unavailable"
 				}
 			} else {
-				validations, valid = p.validateEpisodesForKind(ctx, kind, match.ID, media)
+				validations, _ = p.validateEpisodesForKind(ctx, kind, match.ID, media)
 				r.EpisodeValidation = validations
 			}
 		}
@@ -263,7 +270,8 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 			mapping.PlannedTarget = target
 		}
 	}
-	hadConflict := false
+	plannedConflict := removeDuplicateTargets(&r, media)
+	hadConflict := plannedConflict
 	for _, plan := range r.Plan {
 		action, err := linker.Link(sourceRoot, targetRoot, plan.Source, plan.Target, dry)
 		if err != nil {
@@ -297,6 +305,38 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 		}
 	}
 	return r, nil
+}
+
+func removeDuplicateTargets(result *Result, media []model.MediaFile) bool {
+	byTarget := make(map[string][]model.LinkPlan)
+	for _, plan := range result.Plan {
+		key := strings.ToLower(filepath.Clean(plan.Target))
+		byTarget[key] = append(byTarget[key], plan)
+	}
+	conflictingSources := make(map[string]bool)
+	for _, plans := range byTarget {
+		if len(plans) < 2 {
+			continue
+		}
+		for _, plan := range plans {
+			conflictingSources[plan.Source] = true
+			if mapping := mappingsBySource(result.EpisodeValidation, plan.Source, media); mapping != nil {
+				mapping.State = model.EpisodeUnresolved
+				mapping.Reason = "duplicate target mapping from multiple source files"
+			}
+		}
+	}
+	if len(conflictingSources) == 0 {
+		return false
+	}
+	filtered := result.Plan[:0]
+	for _, plan := range result.Plan {
+		if !conflictingSources[plan.Source] {
+			filtered = append(filtered, plan)
+		}
+	}
+	result.Plan = filtered
+	return true
 }
 
 func (p *Processor) resolveCached(ctx context.Context, kind model.Kind, cached state.VerifiedResolution) (model.Match, model.TVShow, error) {
@@ -377,7 +417,7 @@ func (p *Processor) ensembleConsultAI(ctx context.Context, req ensemble.ResolveR
 	hypothesis, hit, err := p.callAI(ctx, aiReq, result)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%w: AI consultant canceled", ErrAI)
+			return nil, ctx.Err()
 		}
 		result.AI.Error = "AI consultant unavailable"
 		return nil, nil
@@ -781,13 +821,14 @@ func (p *Processor) validateEpisodesForKind(ctx context.Context, kind model.Kind
 	for i := range files {
 		file := &files[i]
 		parsedSeason, parsedEpisode := file.Ref.Season, file.Ref.Episode
-		validation := model.EpisodeValidation{File: file.Name, EpisodeTitle: file.EpisodeTitle, ParsedSeason: parsedSeason, ParsedEpisode: parsedEpisode, Season: file.Ref.Season, Episode: file.Ref.Episode, EpisodeEnd: file.Ref.EpisodeEnd, State: model.EpisodeResolved}
+		validation := model.EpisodeValidation{File: file.Name, EpisodeTitle: file.EpisodeTitle, ParsedSeason: parsedSeason, ParsedEpisode: parsedEpisode, Season: file.Ref.Season, Episode: file.Ref.Episode, EpisodeEnd: file.Ref.EpisodeEnd, State: model.EpisodeResolved, CanonicalVerified: true}
 		end := file.Ref.EpisodeEnd
 		if end < file.Ref.Episode {
 			end = file.Ref.Episode
 		}
 		if file.Ref.Season < 0 || file.Ref.Episode <= 0 || seasonFailed[file.Ref.Season] {
 			validation.State = model.EpisodeUnresolved
+			validation.CanonicalVerified = false
 		}
 		if validation.State == model.EpisodeResolved {
 			var missingEpisodes []int
@@ -820,6 +861,7 @@ func (p *Processor) validateEpisodesForKind(ctx context.Context, kind model.Kind
 			if len(missingEpisodes) > 0 {
 				validation.MissingEpisodes = missingEpisodes
 				validation.State = model.EpisodeUnresolved
+				validation.CanonicalVerified = false
 			}
 		}
 		validations = append(validations, validation)
@@ -856,7 +898,9 @@ func (p *Processor) validateEpisodesForKind(ctx context.Context, kind model.Kind
 		validation.ProviderEvidence = append(validation.ProviderEvidence, providerEvidence...)
 		if siblingStrong && sameSeason && samePattern && !conflict {
 			validation.State = model.EpisodeProvisional
-			validation.Reason = "canonical episode is not yet available; source numbering is supported by sibling context"
+			validation.CanonicalVerified = false
+			validation.Reason = "accepted from strong show/season/sibling context"
+			validation.ContextEvidence = append([]string{"accepted_show_identity", "same_torrent", "source_episode_number_unambiguous"}, validation.ContextEvidence...)
 			validation.Season, validation.Episode = validation.ParsedSeason, validation.ParsedEpisode
 			files[i].Ref.Season, files[i].Ref.Episode = validation.Season, validation.Episode
 		} else if conflict {
@@ -942,6 +986,15 @@ func (p *Processor) provisionalFileConflict(ctx context.Context, kind model.Kind
 func hasUnresolvedMappings(validations []model.EpisodeValidation) bool {
 	for _, validation := range validations {
 		if validation.State == model.EpisodeUnresolved {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNonCanonicalMappings(validations []model.EpisodeValidation) bool {
+	for _, validation := range validations {
+		if validation.State == model.EpisodeUnresolved || validation.State == model.EpisodeProvisional {
 			return true
 		}
 	}

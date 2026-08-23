@@ -155,19 +155,20 @@ const (
 )
 
 type EpisodeValidation struct {
-	File             string                 `json:"file"`
-	EpisodeTitle     string                 `json:"episode_title,omitempty"`
-	ParsedSeason     int                    `json:"parsed_season"`
-	ParsedEpisode    int                    `json:"parsed_episode"`
-	Season           int                    `json:"season"`
-	Episode          int                    `json:"episode"`
-	EpisodeEnd       int                    `json:"episode_end,omitempty"`
-	Remapped         bool                   `json:"remapped,omitempty"`
-	State            EpisodeValidationState `json:"state"`
-	MissingEpisodes  []int                  `json:"missing_episodes,omitempty"`
-	Reason           string                 `json:"reason,omitempty"`
-	ContextEvidence  []string               `json:"context_evidence,omitempty"`
-	ContextScore     int                    `json:"context_score,omitempty"`
-	ProviderEvidence []string               `json:"provider_evidence,omitempty"`
-	PlannedTarget    string                 `json:"planned_target,omitempty"`
+	File              string                 `json:"file"`
+	EpisodeTitle      string                 `json:"episode_title,omitempty"`
+	ParsedSeason      int                    `json:"parsed_season"`
+	ParsedEpisode     int                    `json:"parsed_episode"`
+	Season            int                    `json:"season"`
+	Episode           int                    `json:"episode"`
+	EpisodeEnd        int                    `json:"episode_end,omitempty"`
+	Remapped          bool                   `json:"remapped,omitempty"`
+	CanonicalVerified bool                   `json:"canonical_verified"`
+	State             EpisodeValidationState `json:"state"`
+	MissingEpisodes   []int                  `json:"missing_episodes,omitempty"`
+	Reason            string                 `json:"reason,omitempty"`
+	ContextEvidence   []string               `json:"context_evidence,omitempty"`
+	ContextScore      int                    `json:"context_score,omitempty"`
+	ProviderEvidence  []string               `json:"provider_evidence,omitempty"`
+	PlannedTarget     string                 `json:"planned_target,omitempty"`
 }

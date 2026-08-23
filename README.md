@@ -63,7 +63,7 @@ plexlink resolve --hash INFOHASH --tmdb-id ID
 
 Start with `doctor`, then test a real completed torrent with `process --dry-run`. `inspect` emits the full JSON evidence, candidates, score and link plan. A successful `resolve` remembers the explicit TMDB ID for that torrent hash in `state/resolutions.yaml`.
 
-AI fallback is disabled in `config.example.yaml`. When explicitly enabled, PlexLink calls the configured xAI Responses API only after deterministic matching is insufficient. Grok may propose search queries or episode mappings, but PlexLink searches TMDB again and requires independent title/year/season/episode anchors before planning links. `--no-ai` disables the fallback for one invocation. Structured AI results are cached under `state/ai-cache`; API keys, Authorization headers, absolute local paths, and raw responses are not stored.
+AI fallback is disabled in `config.example.yaml`. When explicitly enabled, PlexLink uses the configured provider only after deterministic evidence is insufficient or to enrich a non-canonical episode mapping. AI may propose search queries or episode mappings, but PlexLink searches TMDB again and requires independent anchors before accepting canonical metadata. Provider timeouts, rate limits, server/auth errors, and invalid output are recorded as degraded diagnostics; they do not invalidate deterministic results or provisional mappings. `--no-ai` disables the fallback for one invocation. Structured AI results are cached under `state/ai-cache`; API keys, Authorization headers, absolute local paths, and raw responses are not stored.
 
 Configure qBittorrent's completion hook only after dry-run validation:
 
@@ -76,6 +76,8 @@ Point Plex TV libraries at the configured TV and anime targets, and the Plex Mov
 ## Safety behavior
 
 - Low confidence or an insufficient score margin returns `UNRESOLVED` and creates no media links.
+- After show identity is accepted, files are mapped independently: canonical files are `RESOLVED`, a strongly supported source `SxxEyy` missing from provider metadata may be `PROVISIONAL`, and unsafe files remain `UNRESOLVED` without blocking safe siblings.
+- `RESOLVED_WITH_WARNINGS` means the plan includes provisional files; `PARTIAL` means safe siblings were planned while at least one file remained unresolved.
 - Anime absolute numbering is accepted only for one non-special TMDB season and an in-range episode.
 - An existing target hardlinked to the same source is a `NOOP`.
 - An existing target belonging to another file is a `CONFLICT`; it is never overwritten.
