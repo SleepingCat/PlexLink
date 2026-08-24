@@ -52,8 +52,9 @@ func TestShutdownIfIdle(t *testing.T) {
 			wantShutdown: true,
 		},
 		{
-			name:     "complete stalled torrent remains",
-			torrents: `[{"hash":"one","progress":1,"amount_left":0,"state":"pausedUP"},{"hash":"two","progress":1,"amount_left":0,"state":"stalledUP"}]`,
+			name:         "complete stalled upload does not block shutdown",
+			torrents:     `[{"hash":"one","progress":1,"amount_left":0,"state":"pausedUP"},{"hash":"two","progress":1,"amount_left":0,"state":"stalledUP"}]`,
+			wantShutdown: true,
 		},
 		{
 			name:     "download state remains despite complete counters",

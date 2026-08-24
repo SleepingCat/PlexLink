@@ -143,7 +143,7 @@ func (c *Client) ShutdownIfIdle(ctx context.Context) (bool, error) {
 
 func shutdownBlockedByState(state string) bool {
 	switch strings.ToLower(strings.TrimSpace(state)) {
-	case "downloading", "forceddl", "stalleddl", "stalledup":
+	case "downloading", "forceddl", "stalleddl":
 		return true
 	default:
 		return false

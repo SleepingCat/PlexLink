@@ -81,7 +81,7 @@ qbittorrent:
   shutdown_after_process: true
 ```
 
-PlexLink waits for processing to finish, allows a short grace window for concurrent completion hooks, and checks every torrent reported by qBittorrent. Shutdown is requested only when every torrent has `progress == 1` and `amount_left == 0`. Any torrent reported as downloading or stalled (`downloading`, `forcedDL`, `stalledDL`, or `stalledUP`) keeps qBittorrent running even if its numeric counters already look complete. Queued, paused, metadata-only, or otherwise incomplete downloads also keep it running. This never runs for `inspect`, `--dry-run`, `doctor`, or `resolve`. A failed idle check leaves qBittorrent running and does not undo an already completed hardlink result.
+PlexLink waits for processing to finish, allows a short grace window for concurrent completion hooks, and checks every torrent reported by qBittorrent. Shutdown is requested only when every torrent has `progress == 1` and `amount_left == 0`. A torrent reported as downloading or stalled while downloading (`downloading`, `forcedDL`, or `stalledDL`) keeps qBittorrent running even if its numeric counters already look complete. Completed `stalledUP` torrents do not block shutdown. Queued, paused, metadata-only, or otherwise incomplete downloads also keep it running. This never runs for `inspect`, `--dry-run`, `doctor`, or `resolve`. A failed idle check leaves qBittorrent running and does not undo an already completed hardlink result.
 
 Point Plex TV libraries at the configured TV and anime targets, and the Plex Movie library at the movie target. Do not point PlexLink at the torrent source directories as targets.
 
