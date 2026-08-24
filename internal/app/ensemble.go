@@ -94,6 +94,7 @@ func (n tmdbNormalizer) verify(ctx context.Context, candidate ensemble.Candidate
 		if err != nil || movie.ID != id {
 			return ensemble.Candidate{}, fmt.Errorf("movie identity not verified")
 		}
+		candidate.Identity.TrustedTitles = trustedTitles(candidate.Identity.Title, movie.Title, movie.OriginalTitle)
 		candidate.Identity.TMDBID, candidate.Identity.Title, candidate.Identity.Year = id, movie.Title, year(movie.ReleaseDate)
 		return candidate, nil
 	}
@@ -101,8 +102,24 @@ func (n tmdbNormalizer) verify(ctx context.Context, candidate ensemble.Candidate
 	if err != nil || show.ID != id {
 		return ensemble.Candidate{}, fmt.Errorf("show identity not verified")
 	}
+	candidate.Identity.TrustedTitles = trustedTitles(candidate.Identity.Title, show.Name, show.OriginalName)
 	candidate.Identity.TMDBID, candidate.Identity.Title, candidate.Identity.Year = id, show.Name, year(show.FirstAirDate)
 	return candidate, nil
+}
+
+func trustedTitles(values ...string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		key := release.NormalizeTitle(value)
+		if value == "" || key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 func externalIDs(kind model.Kind, found model.ExternalFindResult) []int {

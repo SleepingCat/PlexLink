@@ -454,7 +454,7 @@ func aiAssistedCandidate(kind model.Kind, source model.Evidence, hypothesis *ai.
 	}
 	compatible := make([]ensemble.AggregateCandidate, 0, len(second.Candidates))
 	for _, candidate := range second.Candidates {
-		if candidate.Identity.TMDBID <= 0 || candidate.Identity.Kind != kind || !aiTitleAgrees(hypothesis.CanonicalTitle, candidate.Identity.Title) || !aiYearAgrees(hypothesis.Year, candidate.Identity.Year) {
+		if candidate.Identity.TMDBID <= 0 || candidate.Identity.Kind != kind || !aiTitleAgrees(hypothesis.CanonicalTitle, candidate.Identity) || !aiYearAgrees(hypothesis.Year, candidate.Identity.Year) {
 			continue
 		}
 		if combinedCandidate, ok := aggregateCandidateByID(combined.Candidates, candidate.TMDBID); ok {
@@ -483,9 +483,10 @@ func competingSourceIdentity(candidates []ensemble.AggregateCandidate, selectedI
 	return false
 }
 
-func aiTitleAgrees(hypothesis, candidate string) bool {
+func aiTitleAgrees(hypothesis string, candidate ensemble.EntityIdentity) bool {
 	evidence := model.Evidence{Titles: []model.WeightedTitle{{Title: hypothesis, Weight: 1}}}
-	return matcher.TitleSimilarity(evidence, candidate) >= 30
+	titles := append([]string{candidate.Title}, candidate.TrustedTitles...)
+	return matcher.TitleSimilarity(evidence, titles...) >= 30
 }
 
 func aiYearAgrees(hypothesis, candidate int) bool {

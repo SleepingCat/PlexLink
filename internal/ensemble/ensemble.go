@@ -66,12 +66,13 @@ type OperationalError struct {
 }
 
 type EntityIdentity struct {
-	Kind       model.Kind `json:"kind"`
-	TMDBID     int        `json:"tmdb_id,omitempty"`
-	IMDbID     string     `json:"imdb_id,omitempty"`
-	ProviderID string     `json:"provider_id,omitempty"`
-	Title      string     `json:"title,omitempty"`
-	Year       int        `json:"year,omitempty"`
+	Kind          model.Kind `json:"kind"`
+	TMDBID        int        `json:"tmdb_id,omitempty"`
+	IMDbID        string     `json:"imdb_id,omitempty"`
+	ProviderID    string     `json:"provider_id,omitempty"`
+	Title         string     `json:"title,omitempty"`
+	TrustedTitles []string   `json:"trusted_titles,omitempty"`
+	Year          int        `json:"year,omitempty"`
 }
 
 type Candidate struct {

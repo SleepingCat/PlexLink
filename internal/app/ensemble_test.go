@@ -20,8 +20,9 @@ import (
 type ensembleMetadata struct{}
 
 type aiGateMetadata struct {
-	title string
-	year  int
+	title         string
+	originalTitle string
+	year          int
 }
 
 func (aiGateMetadata) SearchMovie(context.Context, string) ([]model.MovieCandidate, error) {
@@ -35,7 +36,11 @@ func (m aiGateMetadata) GetMovie(_ context.Context, id int) (model.Movie, error)
 	if releaseYear == 0 {
 		releaseYear = 2007
 	}
-	return model.Movie{ID: id, Title: title, OriginalTitle: title, ReleaseDate: fmt.Sprintf("%04d-05-22", releaseYear)}, nil
+	originalTitle := m.originalTitle
+	if originalTitle == "" {
+		originalTitle = title
+	}
+	return model.Movie{ID: id, Title: title, OriginalTitle: originalTitle, ReleaseDate: fmt.Sprintf("%04d-05-22", releaseYear)}, nil
 }
 func (aiGateMetadata) GetMovieReleaseDates(context.Context, int) (model.MovieReleaseDates, error) {
 	return model.MovieReleaseDates{}, nil
@@ -178,9 +183,9 @@ func TestAIConsultantRunsOnceAndOneCatalogRequery(t *testing.T) {
 
 func TestAIAssistedGateAcceptsVerifiedCandidateWithoutInflatingScore(t *testing.T) {
 	webUsed := true
-	catalog := aiGateCatalog("Death Proof", 2007)
+	catalog := aiGateCatalog("Доказательство смерти", 2007)
 	aiResolver := &fakeAI{result: ai.Result{Status: ai.Resolved, MediaType: model.KindMovie, CanonicalTitle: "Death Proof", Year: 2007, Confidence: .95, WebSearchUsed: &webUsed}}
-	p := Processor{Metadata: aiGateMetadata{}, Resolvers: []ensemble.Resolver{catalog}, AI: aiResolver, AIProvider: "groq", AIModel: "groq/compound-mini", Config: config.Config{AI: config.AI{Enabled: true, MinConfidence: .9, WebSearch: "require"}, Resolvers: config.Resolvers{Timeout: "1s"}, State: config.State{Directory: t.TempDir()}}}
+	p := Processor{Metadata: aiGateMetadata{title: "Доказательство смерти", originalTitle: "Death Proof", year: 2007}, Resolvers: []ensemble.Resolver{catalog}, AI: aiResolver, AIProvider: "groq", AIModel: "groq/compound-mini", Config: config.Config{AI: config.AI{Enabled: true, MinConfidence: .9, WebSearch: "require"}, Resolvers: config.Resolvers{Timeout: "1s"}, State: config.State{Directory: t.TempDir()}}}
 	result := Result{}
 	match, _, err := p.resolveEnsemble(context.Background(), model.KindMovie, "Dokazatelstvo_smerti", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "Dokazatelstvo smerti"}}}, true, &result)
 	if err != nil || match.ID != 1991 || match.Score != ensemble.PointsTitleExactCanonical || result.Ensemble.FinalDecision == nil || result.Ensemble.FinalDecision.Type != ensemble.DecisionAIAssisted || !result.Ensemble.AIAssistedGate.Accepted || !result.Ensemble.FinalTMDBVerified {
@@ -209,7 +214,7 @@ func TestAIAssistedGateRejectsTMDBDisagreementAndSourceYearConflict(t *testing.T
 			}
 			metadata := aiGateMetadata{}
 			if tt.name == "TMDB title disagrees" {
-				metadata = aiGateMetadata{title: "Different Movie", year: 2007}
+				metadata = aiGateMetadata{title: "Другой фильм", originalTitle: "Different Movie", year: 2007}
 			} else {
 				metadata = aiGateMetadata{title: "Death Proof", year: 2005}
 			}
