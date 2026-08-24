@@ -33,18 +33,19 @@ func TestValidateEpisodeMappings(t *testing.T) {
 }
 
 func TestCacheFingerprintAndHit(t *testing.T) {
+	webUsed := true
 	req := Request{Task: IdentifyMedia, Kind: model.KindMovie, TorrentName: "Ottochennoe.Lezvie.1996.mkv", Files: []string{"Ottochennoe.Lezvie.1996.mkv"}}
 	key, err := Fingerprint(req, "xai", "grok-test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cache := Cache{Directory: t.TempDir()}
-	want := Result{Status: Resolved, MediaType: model.KindMovie, CanonicalTitle: "Sling Blade", SearchQueries: []string{"Sling Blade 1996"}, Confidence: .97, ActualModel: "backend/free-model"}
+	want := Result{Status: Resolved, MediaType: model.KindMovie, CanonicalTitle: "Sling Blade", SearchQueries: []string{"Sling Blade 1996"}, Confidence: .97, ActualModel: "backend/free-model", WebSearchUsed: &webUsed}
 	if err := cache.Save(key, "xai", "grok-test", req, want); err != nil {
 		t.Fatal(err)
 	}
 	got, hit, err := cache.Load(key)
-	if err != nil || !hit || got.CanonicalTitle != want.CanonicalTitle || got.ActualModel != want.ActualModel {
+	if err != nil || !hit || got.CanonicalTitle != want.CanonicalTitle || got.ActualModel != want.ActualModel || got.WebSearchUsed == nil || !*got.WebSearchUsed {
 		t.Fatalf("got=%+v hit=%v err=%v", got, hit, err)
 	}
 }

@@ -112,13 +112,22 @@ type Result struct {
 }
 
 type EnsembleDiagnostics struct {
-	Used              bool                      `json:"used"`
-	CachedResolution  bool                      `json:"cached_resolution"`
-	ResolverResults   []ensemble.ResolverResult `json:"resolver_results,omitempty"`
-	FirstPass         *ensemble.Decision        `json:"first_pass,omitempty"`
-	SecondPassUsed    bool                      `json:"second_pass_used"`
-	FinalDecision     *ensemble.Decision        `json:"final_decision,omitempty"`
-	FinalTMDBVerified bool                      `json:"-"`
+	Used               bool                      `json:"used"`
+	CachedResolution   bool                      `json:"cached_resolution"`
+	ResolverResults    []ensemble.ResolverResult `json:"resolver_results,omitempty"`
+	FirstPass          *ensemble.Decision        `json:"first_pass,omitempty"`
+	SecondPassUsed     bool                      `json:"second_pass_used"`
+	DeterministicFinal *ensemble.Decision        `json:"deterministic_final,omitempty"`
+	AIAssistedGate     AIAssistedGateDiagnostics `json:"ai_assisted_gate"`
+	FinalDecision      *ensemble.Decision        `json:"final_decision,omitempty"`
+	FinalTMDBVerified  bool                      `json:"-"`
+}
+
+type AIAssistedGateDiagnostics struct {
+	Evaluated bool   `json:"evaluated"`
+	Accepted  bool   `json:"accepted"`
+	TMDBID    int    `json:"tmdb_id,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func (p *Processor) Process(ctx context.Context, hash string, dry bool, manualID int) (Result, error) {
@@ -365,6 +374,7 @@ func (p *Processor) resolveEnsemble(ctx context.Context, kind model.Kind, torren
 	result.Ensemble.FirstPass = &run.Decision
 	decision := run.Decision
 	allResults := append([]ensemble.ResolverResult(nil), run.Results...)
+	var secondDecision *ensemble.Decision
 
 	if decision.Type != ensemble.DecisionMatch && allowAI {
 		hypotheses, err := p.ensembleConsultAI(ctx, req, decision, result)
@@ -377,15 +387,30 @@ func (p *Processor) resolveEnsemble(ctx context.Context, kind model.Kind, torren
 			result.Ensemble.SecondPassUsed = true
 			allResults = append(allResults, second.Results...)
 			decision = ensemble.Aggregate(allResults)
+			secondDecision = &second.Decision
 			result.Ensemble.ResolverResults = allResults
 		}
 	}
-	result.Ensemble.FinalDecision = &decision
+	deterministicFinal := decision
+	result.Ensemble.DeterministicFinal = &deterministicFinal
 	result.Candidates = aggregateMatches(decision)
-	if decision.Type != ensemble.DecisionMatch || len(decision.Candidates) == 0 {
+	var top ensemble.AggregateCandidate
+	aiAssisted := false
+	if decision.Type == ensemble.DecisionMatch && len(decision.Candidates) > 0 {
+		top = decision.Candidates[0]
+	} else if secondDecision != nil {
+		result.Ensemble.AIAssistedGate.Evaluated = true
+		candidate, reason, ok := aiAssistedCandidate(kind, evidence, result.AI.Hypothesis, result.AI.WebSearchUsed, p.Config.AI.MinConfidence, *secondDecision, decision)
+		result.Ensemble.AIAssistedGate.Reason = reason
+		if ok {
+			top, aiAssisted = candidate, true
+			result.Ensemble.AIAssistedGate.TMDBID = candidate.TMDBID
+		}
+	}
+	if top.TMDBID == 0 {
+		result.Ensemble.FinalDecision = &decision
 		return model.Match{}, model.TVShow{}, ErrUnresolved
 	}
-	top := decision.Candidates[0]
 	match := model.Match{ID: top.TMDBID, Name: top.Identity.Title, Year: top.Identity.Year, Score: top.TotalScore, Margin: decision.Margin, Breakdown: aggregateBreakdown(top)}
 	if kind == model.KindMovie {
 		movie, err := p.Metadata.GetMovie(ctx, top.TMDBID)
@@ -393,6 +418,7 @@ func (p *Processor) resolveEnsemble(ctx context.Context, kind model.Kind, torren
 			return model.Match{}, model.TVShow{}, fmt.Errorf("%w: final movie verification failed", ErrMetadata)
 		}
 		match.Name, match.Year = movie.Title, year(movie.ReleaseDate)
+		finalizeEnsembleDecision(result, &decision, aiAssisted)
 		result.Ensemble.FinalTMDBVerified, result.AI.Verified = true, result.AI.Used
 		return match, model.TVShow{}, nil
 	}
@@ -401,8 +427,106 @@ func (p *Processor) resolveEnsemble(ctx context.Context, kind model.Kind, torren
 		return model.Match{}, model.TVShow{}, fmt.Errorf("%w: final show verification failed", ErrMetadata)
 	}
 	match.Name, match.Year = show.Name, year(show.FirstAirDate)
+	finalizeEnsembleDecision(result, &decision, aiAssisted)
 	result.Ensemble.FinalTMDBVerified, result.AI.Verified = true, result.AI.Used
 	return match, show, nil
+}
+
+func finalizeEnsembleDecision(result *Result, decision *ensemble.Decision, aiAssisted bool) {
+	if aiAssisted {
+		decision.Type = ensemble.DecisionAIAssisted
+		decision.Reason = "high-confidence web-backed AI hypothesis agreed with catalog candidate and passed final TMDB verification"
+		result.Ensemble.AIAssistedGate.Accepted = true
+		result.Ensemble.AIAssistedGate.Reason = "accepted after final TMDB verification"
+	}
+	result.Ensemble.FinalDecision = decision
+}
+
+func aiAssistedCandidate(kind model.Kind, source model.Evidence, hypothesis *ai.Result, webSearchUsed *bool, minConfidence float64, second, combined ensemble.Decision) (ensemble.AggregateCandidate, string, bool) {
+	if hypothesis == nil || hypothesis.Status != ai.Resolved || hypothesis.Confidence < minConfidence {
+		return ensemble.AggregateCandidate{}, "AI hypothesis is missing or below the configured confidence threshold", false
+	}
+	if webSearchUsed == nil || !*webSearchUsed {
+		return ensemble.AggregateCandidate{}, "AI hypothesis is not confirmed as web-backed", false
+	}
+	if hypothesis.MediaType != kind || strings.TrimSpace(hypothesis.CanonicalTitle) == "" || hypothesis.Year <= 0 {
+		return ensemble.AggregateCandidate{}, "AI hypothesis is missing title, year, or matching media kind", false
+	}
+	compatible := make([]ensemble.AggregateCandidate, 0, len(second.Candidates))
+	for _, candidate := range second.Candidates {
+		if candidate.Identity.TMDBID <= 0 || candidate.Identity.Kind != kind || !aiTitleAgrees(hypothesis.CanonicalTitle, candidate.Identity.Title) || !aiYearAgrees(hypothesis.Year, candidate.Identity.Year) {
+			continue
+		}
+		if combinedCandidate, ok := aggregateCandidateByID(combined.Candidates, candidate.TMDBID); ok {
+			candidate = combinedCandidate
+		}
+		if hasSourceContradiction(source, candidate) || competingSourceIdentity(combined.Candidates, candidate.TMDBID) {
+			continue
+		}
+		compatible = append(compatible, candidate)
+	}
+	if len(compatible) != 1 {
+		if len(compatible) == 0 {
+			return ensemble.AggregateCandidate{}, "second-pass catalog returned no compatible non-conflicting TMDB candidate", false
+		}
+		return ensemble.AggregateCandidate{}, "second-pass catalog returned multiple compatible TMDB candidates", false
+	}
+	return compatible[0], "candidate agrees with the web-backed AI hypothesis; final TMDB verification required", true
+}
+
+func competingSourceIdentity(candidates []ensemble.AggregateCandidate, selectedID int) bool {
+	for _, candidate := range candidates {
+		if candidate.TMDBID != selectedID && candidate.IdentityAnchors > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func aiTitleAgrees(hypothesis, candidate string) bool {
+	evidence := model.Evidence{Titles: []model.WeightedTitle{{Title: hypothesis, Weight: 1}}}
+	return matcher.TitleSimilarity(evidence, candidate) >= 30
+}
+
+func aiYearAgrees(hypothesis, candidate int) bool {
+	if hypothesis <= 0 || candidate <= 0 {
+		return false
+	}
+	difference := hypothesis - candidate
+	if difference < 0 {
+		difference = -difference
+	}
+	return difference <= 1
+}
+
+func hasSourceContradiction(source model.Evidence, candidate ensemble.AggregateCandidate) bool {
+	if len(candidate.HardConflicts) > 0 {
+		return true
+	}
+	releaseYearConfirmed := false
+	for _, item := range candidate.Evidence {
+		if item.Type == ensemble.EvidenceYearClearMismatch {
+			return true
+		}
+		releaseYearConfirmed = releaseYearConfirmed || item.Type == ensemble.EvidenceYearReleaseDateExact
+	}
+	if source.Year == 0 || candidate.Identity.Year == 0 || releaseYearConfirmed {
+		return false
+	}
+	difference := source.Year - candidate.Identity.Year
+	if difference < 0 {
+		difference = -difference
+	}
+	return difference > 2
+}
+
+func aggregateCandidateByID(candidates []ensemble.AggregateCandidate, id int) (ensemble.AggregateCandidate, bool) {
+	for _, candidate := range candidates {
+		if candidate.TMDBID == id {
+			return candidate, true
+		}
+	}
+	return ensemble.AggregateCandidate{}, false
 }
 
 func (p *Processor) ensembleConsultAI(ctx context.Context, req ensemble.ResolveRequest, decision ensemble.Decision, result *Result) ([]string, error) {

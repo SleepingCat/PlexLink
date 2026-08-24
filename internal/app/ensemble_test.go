@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,47 @@ import (
 )
 
 type ensembleMetadata struct{}
+
+type aiGateMetadata struct {
+	title string
+	year  int
+}
+
+func (aiGateMetadata) SearchMovie(context.Context, string) ([]model.MovieCandidate, error) {
+	return nil, nil
+}
+func (m aiGateMetadata) GetMovie(_ context.Context, id int) (model.Movie, error) {
+	title, releaseYear := m.title, m.year
+	if title == "" {
+		title = "Death Proof"
+	}
+	if releaseYear == 0 {
+		releaseYear = 2007
+	}
+	return model.Movie{ID: id, Title: title, OriginalTitle: title, ReleaseDate: fmt.Sprintf("%04d-05-22", releaseYear)}, nil
+}
+func (aiGateMetadata) GetMovieReleaseDates(context.Context, int) (model.MovieReleaseDates, error) {
+	return model.MovieReleaseDates{}, nil
+}
+func (aiGateMetadata) SearchTV(context.Context, string) ([]model.TVCandidate, error) { return nil, nil }
+func (aiGateMetadata) GetTV(context.Context, int) (model.TVShow, error) {
+	return model.TVShow{}, errors.New("not found")
+}
+func (aiGateMetadata) GetSeason(context.Context, int, int) (model.Season, error) {
+	return model.Season{}, errors.New("not found")
+}
+
+type finalFailMetadata struct {
+	aiGateMetadata
+	calls atomic.Int32
+}
+
+func (m *finalFailMetadata) GetMovie(ctx context.Context, id int) (model.Movie, error) {
+	if m.calls.Add(1) > 1 {
+		return model.Movie{}, errors.New("TMDB unavailable")
+	}
+	return m.aiGateMetadata.GetMovie(ctx, id)
+}
 
 func (ensembleMetadata) SearchMovie(_ context.Context, query string) ([]model.MovieCandidate, error) {
 	if strings.Contains(strings.ToLower(query), "sling blade") {
@@ -132,6 +174,99 @@ func TestAIConsultantRunsOnceAndOneCatalogRequery(t *testing.T) {
 	if result.Ensemble.FinalDecision.Candidates[0].TotalScore != 500 {
 		t.Fatalf("AI confidence leaked into score: %+v", result.Ensemble.FinalDecision.Candidates[0])
 	}
+}
+
+func TestAIAssistedGateAcceptsVerifiedCandidateWithoutInflatingScore(t *testing.T) {
+	webUsed := true
+	catalog := aiGateCatalog("Death Proof", 2007)
+	aiResolver := &fakeAI{result: ai.Result{Status: ai.Resolved, MediaType: model.KindMovie, CanonicalTitle: "Death Proof", Year: 2007, Confidence: .95, WebSearchUsed: &webUsed}}
+	p := Processor{Metadata: aiGateMetadata{}, Resolvers: []ensemble.Resolver{catalog}, AI: aiResolver, AIProvider: "groq", AIModel: "groq/compound-mini", Config: config.Config{AI: config.AI{Enabled: true, MinConfidence: .9, WebSearch: "require"}, Resolvers: config.Resolvers{Timeout: "1s"}, State: config.State{Directory: t.TempDir()}}}
+	result := Result{}
+	match, _, err := p.resolveEnsemble(context.Background(), model.KindMovie, "Dokazatelstvo_smerti", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "Dokazatelstvo smerti"}}}, true, &result)
+	if err != nil || match.ID != 1991 || match.Score != ensemble.PointsTitleExactCanonical || result.Ensemble.FinalDecision == nil || result.Ensemble.FinalDecision.Type != ensemble.DecisionAIAssisted || !result.Ensemble.AIAssistedGate.Accepted || !result.Ensemble.FinalTMDBVerified {
+		t.Fatalf("match=%+v diagnostics=%+v err=%v", match, result.Ensemble, err)
+	}
+	if result.Ensemble.DeterministicFinal == nil || result.Ensemble.DeterministicFinal.Type != ensemble.DecisionAmbiguous || result.Ensemble.DeterministicFinal.Candidates[0].TotalScore != ensemble.PointsTitleExactCanonical {
+		t.Fatalf("deterministic score/decision was altered: %+v", result.Ensemble.DeterministicFinal)
+	}
+}
+
+func TestAIAssistedGateRejectsTMDBDisagreementAndSourceYearConflict(t *testing.T) {
+	webUsed := true
+	tests := []struct {
+		name       string
+		catalog    *orchestrationResolver
+		sourceYear int
+	}{
+		{name: "TMDB title disagrees", catalog: aiGateCatalog("Different Movie", 2007)},
+		{name: "source year conflicts", catalog: aiGateCatalog("Death Proof", 2005), sourceYear: 1998},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aiResolver := &fakeAI{result: ai.Result{Status: ai.Resolved, MediaType: model.KindMovie, CanonicalTitle: "Death Proof", Year: 2005, Confidence: .98, WebSearchUsed: &webUsed}}
+			if tt.name == "TMDB title disagrees" {
+				aiResolver.result.Year = 2007
+			}
+			metadata := aiGateMetadata{}
+			if tt.name == "TMDB title disagrees" {
+				metadata = aiGateMetadata{title: "Different Movie", year: 2007}
+			} else {
+				metadata = aiGateMetadata{title: "Death Proof", year: 2005}
+			}
+			p := Processor{Metadata: metadata, Resolvers: []ensemble.Resolver{tt.catalog}, AI: aiResolver, AIProvider: "groq", AIModel: "groq/compound-mini", Config: config.Config{AI: config.AI{Enabled: true, MinConfidence: .9, WebSearch: "require"}, Resolvers: config.Resolvers{Timeout: "1s"}, State: config.State{Directory: t.TempDir()}}}
+			result := Result{}
+			_, _, err := p.resolveEnsemble(context.Background(), model.KindMovie, "source", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "source"}}, Year: tt.sourceYear}, true, &result)
+			if !errors.Is(err, ErrUnresolved) || result.Ensemble.AIAssistedGate.Accepted {
+				t.Fatalf("diagnostics=%+v err=%v", result.Ensemble, err)
+			}
+		})
+	}
+}
+
+func TestAIAssistedGateRequiresWebBackedHypothesisAndFinalTMDBVerification(t *testing.T) {
+	webNotUsed := false
+	failingMetadata := &finalFailMetadata{}
+	for _, tt := range []struct {
+		name      string
+		web       *bool
+		metadata  MetadataProvider
+		wantError error
+	}{
+		{name: "not web backed", web: &webNotUsed, metadata: aiGateMetadata{}, wantError: ErrUnresolved},
+		{name: "final TMDB failure", web: func() *bool { value := true; return &value }(), metadata: failingMetadata, wantError: ErrMetadata},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			catalog := aiGateCatalog("Death Proof", 2007)
+			aiResolver := &fakeAI{result: ai.Result{Status: ai.Resolved, MediaType: model.KindMovie, CanonicalTitle: "Death Proof", Year: 2007, Confidence: .99, WebSearchUsed: tt.web}}
+			p := Processor{Metadata: tt.metadata, Resolvers: []ensemble.Resolver{catalog}, AI: aiResolver, AIProvider: "groq", AIModel: "groq/compound-mini", Config: config.Config{AI: config.AI{Enabled: true, MinConfidence: .9, WebSearch: "require"}, Resolvers: config.Resolvers{Timeout: "1s"}, State: config.State{Directory: t.TempDir()}}}
+			result := Result{}
+			_, _, err := p.resolveEnsemble(context.Background(), model.KindMovie, "source", nil, model.Evidence{}, true, &result)
+			if !errors.Is(err, tt.wantError) || result.Ensemble.AIAssistedGate.Accepted || result.Ensemble.FinalTMDBVerified {
+				t.Fatalf("diagnostics=%+v err=%v", result.Ensemble, err)
+			}
+		})
+	}
+}
+
+func TestAIAssistedGateRejectsLowConfidenceBeforeSecondPass(t *testing.T) {
+	webUsed := true
+	catalog := aiGateCatalog("Death Proof", 2007)
+	aiResolver := &fakeAI{result: ai.Result{Status: ai.Resolved, MediaType: model.KindMovie, CanonicalTitle: "Death Proof", Year: 2007, Confidence: .89, WebSearchUsed: &webUsed}}
+	p := Processor{Metadata: aiGateMetadata{}, Resolvers: []ensemble.Resolver{catalog}, AI: aiResolver, AIProvider: "groq", AIModel: "groq/compound-mini", Config: config.Config{AI: config.AI{Enabled: true, MinConfidence: .9, WebSearch: "require"}, Resolvers: config.Resolvers{Timeout: "1s"}, State: config.State{Directory: t.TempDir()}}}
+	result := Result{}
+	_, _, err := p.resolveEnsemble(context.Background(), model.KindMovie, "source", nil, model.Evidence{}, true, &result)
+	if !errors.Is(err, ErrUnresolved) || result.Ensemble.SecondPassUsed || result.Ensemble.AIAssistedGate.Evaluated || catalog.calls.Load() != 1 {
+		t.Fatalf("catalog=%d diagnostics=%+v err=%v", catalog.calls.Load(), result.Ensemble, err)
+	}
+}
+
+func aiGateCatalog(title string, year int) *orchestrationResolver {
+	return &orchestrationResolver{name: "tmdb", resolve: func(req ensemble.ResolveRequest) ensemble.ResolverResult {
+		if len(req.TitleHypotheses) == 0 {
+			return ensemble.ResolverResult{Name: "tmdb", Status: ensemble.ResolverAbstain}
+		}
+		return ensemble.ResolverResult{Name: "tmdb", Status: ensemble.ResolverOK, Candidates: []ensemble.Candidate{{Identity: ensemble.EntityIdentity{Kind: model.KindMovie, TMDBID: 1991, Title: title, Year: year}, Evidence: []ensemble.Evidence{{Family: ensemble.FamilyTitle, Type: ensemble.EvidenceTitleExactCanonical, Source: "tmdb", Points: ensemble.PointsTitleExactCanonical}}}}}
+	}}
 }
 
 func TestPostAIInsufficientEvidenceStaysUnresolved(t *testing.T) {

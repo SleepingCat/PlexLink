@@ -13,7 +13,7 @@ import (
 
 type Cache struct{ Directory string }
 
-const CacheSchemaVersion = "1"
+const CacheSchemaVersion = "2"
 
 type cacheRecord struct {
 	CacheSchemaVersion string  `json:"ai_cache_schema_version"`

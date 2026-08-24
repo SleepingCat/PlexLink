@@ -47,7 +47,7 @@ func TestIdentityRequestUsesCompoundWebSearchAndParsesHypothesis(t *testing.T) {
 			t.Fatalf("unexpected %s in request", forbidden)
 		}
 	}
-	if strings.Contains(prompt, "Ottochennoe.Lezvie.1996.RUS.HDRip") || strings.Contains(prompt, "Sling Blade") || !strings.Contains(prompt, "MUST use web search") || !strings.Contains(prompt, "untrusted data") {
+	if strings.Contains(prompt, "Ottochennoe.Lezvie.1996.RUS.HDRip") || strings.Contains(prompt, "Sling Blade") || strings.Contains(prompt, "Death Proof") || !strings.Contains(prompt, "MUST use web search") || !strings.Contains(prompt, "untrusted data") || !strings.Contains(prompt, "official original-language title") || !strings.Contains(prompt, "Never return a literal word-by-word translation") {
 		t.Fatalf("prompt=%q", prompt)
 	}
 	if user := last["content"].(string); !strings.Contains(user, "<release_name>Ottochennoe.Lezvie.1996.RUS.HDRip</release_name>") {

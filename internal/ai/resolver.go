@@ -104,7 +104,7 @@ type Result struct {
 	EpisodeMappings  []EpisodeMapping `json:"episode_mappings"`
 	Confidence       float64          `json:"confidence"`
 	EvidenceSummary  []string         `json:"evidence_summary"`
-	WebSearchUsed    *bool            `json:"-"`
+	WebSearchUsed    *bool            `json:"web_search_used,omitempty"`
 	ProviderRequests int              `json:"-"`
 	ActualModel      string           `json:"-"`
 	ProviderRequest  string           `json:"-"`

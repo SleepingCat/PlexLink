@@ -267,6 +267,14 @@ Rules:
 8. Return the real ORIGINAL TITLE of the identified work, not the cleaned release title and not a literal translation.
 9. If the evidence is insufficient or conflicting, return null for original_title and use a low confidence score instead of guessing.
 
+IMPORTANT ABOUT original_title:
+- original_title MUST be the official original-language title of the identified work.
+- Do not return the Russian localized title unless Russian is actually the original language of the work.
+- For an English-language US or UK movie or TV series, return its official English original title.
+- For Japanese, Korean, French, German, Spanish, and other works, return the canonical original-language title used by authoritative metadata sources when reasonably identifiable.
+- Never return a literal word-by-word translation of the release title.
+- Never use the cleaned release title merely because it resembles the work.
+
 Return ONLY compact JSON. No Markdown. No explanations. No citations in the text response.
 Return exactly these fields:
 {"original_title":"<actual original title>","year":<release year>,"kind":"<movie or tv>","confidence":<number from 0.0 to 1.0>}`, ai.PromptVersion)

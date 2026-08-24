@@ -190,6 +190,7 @@ type DecisionType string
 
 const (
 	DecisionMatch      DecisionType = "MATCH"
+	DecisionAIAssisted DecisionType = "AI_ASSISTED_MATCH"
 	DecisionAmbiguous  DecisionType = "AMBIGUOUS"
 	DecisionConflict   DecisionType = "CONFLICT"
 	DecisionNoEvidence DecisionType = "NO_EVIDENCE"
