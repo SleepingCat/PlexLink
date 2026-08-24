@@ -38,7 +38,8 @@ func TestIdentityRequestUsesCompoundWebSearchAndParsesHypothesis(t *testing.T) {
 	tools := got["compound_custom"].(map[string]any)["tools"].(map[string]any)["enabled_tools"].([]any)
 	messages := got["messages"].([]any)
 	prompt := messages[0].(map[string]any)["content"].(string)
-	if len(got) != 3 || got["model"] != "groq/compound-mini" || len(messages) != 1 || messages[0].(map[string]any)["role"] != "system" || len(tools) != 1 || tools[0] != "web_search" {
+	last := messages[len(messages)-1].(map[string]any)
+	if len(got) != 3 || got["model"] != "groq/compound-mini" || len(messages) < 2 || messages[0].(map[string]any)["role"] != "system" || last["role"] != "user" || len(tools) != 1 || tools[0] != "web_search" {
 		t.Fatalf("wire=%+v", got)
 	}
 	for _, forbidden := range []string{"temperature", "max_completion_tokens", "citation_options", "response_format", "reasoning_effort", "reasoning_format"} {
@@ -46,8 +47,11 @@ func TestIdentityRequestUsesCompoundWebSearchAndParsesHypothesis(t *testing.T) {
 			t.Fatalf("unexpected %s in request", forbidden)
 		}
 	}
-	if !strings.Contains(prompt, "Ottochennoe.Lezvie.1996.RUS.HDRip") || strings.Contains(prompt, "Sling Blade") || !strings.Contains(prompt, "MUST use web search") {
+	if strings.Contains(prompt, "Ottochennoe.Lezvie.1996.RUS.HDRip") || strings.Contains(prompt, "Sling Blade") || !strings.Contains(prompt, "MUST use web search") || !strings.Contains(prompt, "untrusted data") {
 		t.Fatalf("prompt=%q", prompt)
+	}
+	if user := last["content"].(string); !strings.Contains(user, "<release_name>Ottochennoe.Lezvie.1996.RUS.HDRip</release_name>") {
+		t.Fatalf("user message=%q", user)
 	}
 	if result.ProviderRequest == "" || strings.Contains(result.ProviderRequest, "test-key") {
 		t.Fatalf("unsafe/missing sanitized request: %q", result.ProviderRequest)

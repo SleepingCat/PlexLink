@@ -25,8 +25,23 @@ func (groqTVMetadata) GetTV(_ context.Context, id int) (model.TVShow, error) {
 
 func TestGroqHypothesisEntersExistingSecondPassAndTMDBVerification(t *testing.T) {
 	var providerRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		providerRequests.Add(1)
+		var payload struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload.Messages) < 2 || payload.Messages[len(payload.Messages)-1].Role != "user" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":400,"message":"last message role must be 'user'"}}`))
+			return
+		}
+		if !strings.Contains(payload.Messages[len(payload.Messages)-1].Content, "Ottochennoe.Lezvie.1996.RUS.HDRip") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"model": "groq/compound-mini", "choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": `{"original_title":"Sling Blade","year":1996,"kind":"movie","confidence":0.95}`}}}})
 	}))
 	defer server.Close()
