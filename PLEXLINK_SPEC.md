@@ -1,6 +1,6 @@
 # PlexLink — техническая спецификация для реализации
 
-> Revision 7 — 2026-08-21. Уточнена provenance-модель evidence: catalog external IDs используются для identity normalization, но сами по себе не являются match evidence. Исправлены правила TIME для missing year. Сохраняется целевая архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**. TMDB/OpenSubtitles/Kinopoisk.dev/TVMaze собирают evidence параллельно, результаты нормализуются к TMDB identity, затем ранжируются числовыми баллами с caps по evidence families и hard-conflict rules. OpenRouter не является ещё одним голосом: он консультант для неоднозначных случаев. TV/Anime mapping больше не all-or-nothing: подтверждённые файлы могут линковаться независимо, а свежий эпизод с надёжной show/season context может иметь состояние `PROVISIONAL`. TMDB остаётся canonical metadata provider и финальным validator.
+> Revision 8 — 2026-08-24. TV/Anime layout больше не включает `{tmdb-ID}` в имени series directory: проверенная TMDB identity записывается в детерминированный `.plexmatch` внутри этой папки. Movie layout сохраняет `{tmdb-ID}`, потому что Plex официально документирует `.plexmatch` только для TV Series. Сохраняется provenance-модель evidence и архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**.
 
 ## 0. Цель
 
@@ -79,6 +79,8 @@ MVP **никогда** не должен:
 os.MkdirAll(...)
 os.Link(source, target)
 ```
+
+После принятого TV/Anime match разрешена также контролируемая запись target-side файла `.plexmatch`. Он никогда не создаётся в source tree, не перезаписывается при конфликте и не создаётся в dry-run. Удалять разрешено только собственный неполный `.plexmatch`, если его первоначальная запись завершилась ошибкой.
 
 Плюс чтение файлов/метаданных и запись собственного state/log/cache.
 
@@ -1390,11 +1392,22 @@ Optional:
 
 ```text
 K:\plex\serials\
-└── Show Name (Year) {tmdb-123456}\
+└── Show Name (Year)\
+    ├── .plexmatch
     └── Season 02\
         ├── Show Name (Year) - S02E01.ext
         └── Show Name (Year) - S02E02.ext
 ```
+
+Series-level `.plexmatch` содержит только проверенные PlexLink значения:
+
+```text
+Title: Show Name
+Year: 2018
+TmdbId: 123456
+```
+
+Hint names case-insensitive в Plex; PlexLink использует показанный canonical casing и LF line endings. `TmdbId` достаточен для точной identity. `TvdbId`/`ImdbId` можно добавлять только если они независимо получены и проверены; PlexLink не должен их выдумывать или копировать из неподтверждённого candidate.
 
 `Season` должен быть именно английским словом.
 
@@ -1425,16 +1438,21 @@ K:\plex\films\
     └── Movie Name (Year) {tmdb-123456}.ext
 ```
 
+Movie сохраняет `{tmdb-ID}`: официальный `.plexmatch` contract Plex относится к TV Series и не является надёжной заменой movie ID hint.
+
 ## 10.3. Anime
 
 В Plex это TV library.
 
 ```text
 K:\plex\anime\
-└── Anime Name (Year) {tmdb-123456}\
+└── Anime Name (Year)\
+    ├── .plexmatch
     └── Season 01\
         └── Anime Name (Year) - S01E03.ext
 ```
+
+Anime использует тот же series-level `.plexmatch` с `TmdbId`, поскольку в Plex это TV library.
 
 ---
 
@@ -1518,6 +1536,18 @@ different file       → CONFLICT
 Для проверки использовать `os.Stat` + `os.SameFile` там, где это работает на Windows.
 
 Никогда автоматически не удалять conflict target.
+
+## 12.1. `.plexmatch` sidecar
+
+Перед созданием TV/Anime hardlinks проверить series-level `.plexmatch`:
+
+```text
+отсутствует                   → PLANNED / создать после media linking
+содержимое буквально совпало → NOOP
+существует с иным содержимым  → CONFLICT, не перезаписывать и не создавать новые hardlinks
+```
+
+Путь `.plexmatch` обязан находиться внутри соответствующего target root. Запись использует exclusive create, поэтому race не должен приводить к перезаписи чужого файла. Dry-run выполняет containment/existence/conflict checks, но не создаёт directory или sidecar.
 
 ---
 
@@ -1706,9 +1736,12 @@ Optional:
 
 ```text
 --no-ai
+--debug
 ```
 
-отключает AI fallback для конкретного запуска.
+`--no-ai` отключает AI fallback для конкретного запуска. `--debug` включает полный diagnostic JSON.
+
+Обычный production output должен быть кратким и пригодным для completion hook: результат распознавания, canonical title/year/TMDB ID, общий processing status, target structure с действиями `CREATED/NOOP/CONFLICT/PLANNED` и итог shutdown qBittorrent. Полные torrent/evidence/candidate/resolver/AI diagnostics выводятся только при `--debug` или через отдельную команду `inspect`.
 
 ### Dry-run
 
@@ -1724,7 +1757,7 @@ plexlink process --hash <hash> --dry-run
 plexlink process --hash <hash> --dry-run --no-ai
 ```
 
-Dry-run output должен показывать:
+Обычный dry-run output показывает результат распознавания и planned target structure. При `--debug` dry-run дополнительно должен показывать:
 
 - parsed evidence;
 - deterministic TMDB candidates/scoring;
@@ -1750,6 +1783,8 @@ plexlink inspect --hash <hash>
 - TMDB candidates;
 - score breakdown;
 - AI/cache diagnostics, если они есть.
+
+`inspect` всегда использует полный diagnostic JSON и не требует дополнительного `--debug`.
 
 ### Resolve
 
@@ -1971,11 +2006,13 @@ qBittorrent Web API использует session cookie.
 Client должен:
 
 1. login;
-2. сохранить SID cookie;
+2. сохранить возвращённую SID cookie, если qBittorrent её устанавливает;
 3. запросить torrent по hash;
 4. запросить torrent files.
 
 Можно использовать `cookiejar`.
+
+Успешный login совместим с обеими версиями Web API: legacy response `200 OK` с телом `Ok.` и qBittorrent 5.2+ response `204 No Content`. Другой HTTP status или неожидаемое тело legacy response считаются ошибкой авторизации. При включённом в qBittorrent обходе авторизации для localhost SID cookie может отсутствовать.
 
 Не делать login перед каждым HTTP request внутри одной обработки.
 
@@ -2082,7 +2119,7 @@ First-pass catalogs могут не распознать transliteration. Fake A
 
 ### Pantheon
 
-S01 и S02 должны попадать в один `Pantheon (2022) {tmdb-ID}` с разными Season directories.
+S01 и S02 должны попадать в один `Pantheon (2022)` с общим `.plexmatch` и разными Season directories.
 
 ### Pluto
 
@@ -2239,7 +2276,8 @@ AI tests не должны выполнять реальные hardlinks вне 
 - [ ] `--dry-run` ничего не меняет.
 - [ ] AI cache не содержит secrets.
 - [ ] TV/Movie hardlinks получают Plex layout.
-- [ ] Target includes year и `{tmdb-ID}`.
+- [ ] TV/Anime target включает year и series-level `.plexmatch` с проверенным `TmdbId`; Movie target включает year и `{tmdb-ID}`.
+- [ ] `.plexmatch` idempotent, conflict-aware и не создаётся в dry-run.
 - [ ] Повторная обработка idempotent.
 - [ ] Conflict не перезаписывается.
 - [ ] Source files никогда не меняются.
@@ -2276,7 +2314,7 @@ NO AniDB integration
 NO AniList integration
 NO ffprobe
 NO poster downloading
-NO Plex metadata writing
+NO Plex metadata writing, кроме узкого series match hint `.plexmatch`
 NO NFO generation
 NO automatic source cleanup
 NO copy fallback

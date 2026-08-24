@@ -50,3 +50,33 @@ func TestDryRunDoesNotCreateDirectory(t *testing.T) {
 		t.Fatal("dry-run created target root")
 	}
 }
+
+func TestWriteSidecarIsDryRunSafeIdempotentAndConflictAware(t *testing.T) {
+	root := t.TempDir()
+	targetRoot := filepath.Join(root, "target")
+	target := filepath.Join(targetRoot, "Show (2020)", ".plexmatch")
+	content := []byte("Title: Show\nYear: 2020\nTmdbId: 7\n")
+	action, err := WriteSidecar(targetRoot, target, content, true)
+	if err != nil || action != Planned {
+		t.Fatalf("dry run: action=%s err=%v", action, err)
+	}
+	if _, err := os.Stat(targetRoot); !os.IsNotExist(err) {
+		t.Fatalf("dry run created target root: %v", err)
+	}
+	action, err = WriteSidecar(targetRoot, target, content, false)
+	if err != nil || action != Created {
+		t.Fatalf("create: action=%s err=%v", action, err)
+	}
+	action, err = WriteSidecar(targetRoot, target, content, false)
+	if err != nil || action != Noop {
+		t.Fatalf("repeat: action=%s err=%v", action, err)
+	}
+	action, err = WriteSidecar(targetRoot, target, []byte("TmdbId: 99\n"), false)
+	if err != nil || action != Conflict {
+		t.Fatalf("conflict: action=%s err=%v", action, err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != string(content) {
+		t.Fatalf("existing sidecar changed: content=%q err=%v", got, err)
+	}
+}

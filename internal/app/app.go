@@ -104,6 +104,12 @@ type QBittorrentShutdownDiagnostics struct {
 	Error         string `json:"error,omitempty"`
 }
 
+type PlexMatchDiagnostics struct {
+	Target  string        `json:"target"`
+	Content string        `json:"content"`
+	Action  linker.Action `json:"action"`
+}
+
 type Result struct {
 	Torrent                model.Torrent                   `json:"torrent"`
 	Kind                   model.Kind                      `json:"kind"`
@@ -114,6 +120,7 @@ type Result struct {
 	MappingStatus          model.MappingStatus             `json:"mapping_status,omitempty"`
 	Plan                   []model.LinkPlan                `json:"plan"`
 	Actions                []linker.Action                 `json:"actions"`
+	PlexMatch              *PlexMatchDiagnostics           `json:"plexmatch,omitempty"`
 	AI                     AIDiagnostics                   `json:"ai"`
 	Ensemble               EnsembleDiagnostics             `json:"ensemble"`
 	Resolution             ResolutionDiagnostics           `json:"resolution"`
@@ -294,6 +301,24 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 	}
 	plannedConflict := removeDuplicateTargets(&r, media)
 	hadConflict := plannedConflict
+	if len(r.Plan) > 0 {
+		matchTarget, matchContent, applicable, err := plexpath.BuildMatchFile(targetRoot, kind, match)
+		if err != nil {
+			return r, err
+		}
+		if applicable {
+			r.PlexMatch = &PlexMatchDiagnostics{Target: matchTarget, Content: matchContent}
+			action, err := linker.WriteSidecar(targetRoot, matchTarget, []byte(matchContent), true)
+			if err != nil {
+				return r, err
+			}
+			r.PlexMatch.Action = action
+			if action == linker.Conflict {
+				r.MappingStatus = model.MappingConflict
+				return r, ErrConflict
+			}
+		}
+	}
 	for _, plan := range r.Plan {
 		action, err := linker.Link(sourceRoot, targetRoot, plan.Source, plan.Target, dry)
 		if err != nil {
@@ -306,6 +331,16 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 				mapping.State, mapping.Reason = model.EpisodeUnresolved, "target exists for a different source"
 			}
 			continue
+		}
+	}
+	if !dry && r.PlexMatch != nil {
+		action, err := linker.WriteSidecar(targetRoot, r.PlexMatch.Target, []byte(r.PlexMatch.Content), false)
+		if err != nil {
+			return r, err
+		}
+		r.PlexMatch.Action = action
+		if action == linker.Conflict {
+			hadConflict = true
 		}
 	}
 	if hadConflict {

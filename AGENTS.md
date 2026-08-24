@@ -63,6 +63,8 @@ Directory creation is allowed:
 os.MkdirAll(...)
 ```
 
+For an accepted TV/Anime match, PlexLink may create one deterministic target-side `.plexmatch` file in the series directory. It must use exclusive create, remain inside the configured target root, never overwrite different existing content, and never be created during dry-run. Removing only a newly created partial `.plexmatch` after its own failed write is allowed.
+
 If a proposed implementation requires destructive operations, stop and reconsider the design.
 
 ---
@@ -147,6 +149,7 @@ Prefer plain structs and functions elsewhere.
 - candidate scoring;
 - season / episode validation;
 - Plex-compatible path generation;
+- deterministic TV/Anime `.plexmatch` generation from TMDB-verified identity;
 - NTFS hardlink creation;
 - idempotency;
 - conflict detection;
@@ -181,7 +184,7 @@ Do not implement unless the specification is changed:
 - ffprobe-based identification;
 - NFO generation;
 - poster downloading;
-- Plex metadata writing;
+- Plex metadata writing, except the narrowly scoped TV/Anime `.plexmatch` identity hint;
 - automatic source cleanup;
 - copy fallback;
 - symlink fallback;
@@ -588,9 +591,18 @@ Generate Plex-friendly layouts.
 TV:
 
 ```text
-Show Name (2022) {tmdb-12345}\
+Show Name (2022)\
+├── .plexmatch
 └── Season 01\
     └── Show Name (2022) - S01E01.mkv
+```
+
+The series-level `.plexmatch` contains verified values:
+
+```text
+Title: Show Name
+Year: 2022
+TmdbId: 12345
 ```
 
 Movies:
@@ -603,7 +615,8 @@ Movie Name (2024) {tmdb-12345}\
 Anime:
 
 ```text
-Anime Name (2023) {tmdb-12345}\
+Anime Name (2023)\
+├── .plexmatch
 └── Season 01\
     └── Anime Name (2023) - S01E03.mkv
 ```
@@ -641,6 +654,16 @@ target exists and points to different file
 
 Never automatically overwrite a conflicting target.
 
+For TV/Anime `.plexmatch`:
+
+```text
+missing                         → create with exclusive create
+same deterministic content     → NOOP
+different existing content     → CONFLICT; never overwrite
+```
+
+Check `.plexmatch` conflicts before creating new media hardlinks in that series directory.
+
 Do not silently fall back to copy or symlink.
 
 Hardlink failure must be explicit.
@@ -666,6 +689,7 @@ Dry-run must not:
 
 - create directories;
 - create hardlinks;
+- create `.plexmatch` files;
 - alter state that affects production behavior.
 
 Whenever adding a new mutation path, ensure dry-run bypasses it.
@@ -682,11 +706,14 @@ Expected commands:
 plexlink doctor
 plexlink process --hash HASH
 plexlink process --hash HASH --dry-run
+plexlink process --hash HASH --debug
 plexlink inspect --hash HASH
 plexlink resolve --hash HASH --tmdb-id ID
 ```
 
 Avoid Cobra unless command complexity clearly justifies it.
+
+Normal `process`/`resolve` output is concise: recognition result, verified media identity, processing status, target structure/actions, and qBittorrent shutdown outcome. Full result/evidence/resolver/AI JSON is emitted only with `--debug`; `inspect` is always detailed. Do not reintroduce unconditional full JSON in the completion-hook path.
 
 The standard `flag` package plus a small subcommand dispatcher is preferred.
 

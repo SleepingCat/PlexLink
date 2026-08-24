@@ -45,8 +45,13 @@ func (c *Client) Login(ctx context.Context) error {
 		return fmt.Errorf("qBittorrent login: %w", err)
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-	if resp.StatusCode != 200 || strings.TrimSpace(string(b)) != "Ok." {
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		return fmt.Errorf("read qBittorrent login response: %w", err)
+	}
+	legacySuccess := resp.StatusCode == http.StatusOK && strings.TrimSpace(string(b)) == "Ok."
+	currentSuccess := resp.StatusCode == http.StatusNoContent
+	if !legacySuccess && !currentSuccess {
 		return fmt.Errorf("qBittorrent login failed: status %d", resp.StatusCode)
 	}
 	c.loggedIn = true

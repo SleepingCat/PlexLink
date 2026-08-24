@@ -40,6 +40,45 @@ func TestClientLoginTorrentAndFiles(t *testing.T) {
 	}
 }
 
+func TestLoginResponseCompatibility(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		statusCode int
+		body       string
+		wantError  bool
+	}{
+		{name: "legacy 200 Ok", statusCode: http.StatusOK, body: "Ok."},
+		{name: "qBittorrent 5.2 no content", statusCode: http.StatusNoContent},
+		{name: "legacy authentication failure", statusCode: http.StatusOK, body: "Fails.", wantError: true},
+		{name: "empty legacy response", statusCode: http.StatusOK, wantError: true},
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v2/auth/login" {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(test.statusCode)
+				fmt.Fprint(w, test.body)
+			}))
+			defer server.Close()
+
+			client, err := New(server.URL, "user", "secret", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = client.Login(context.Background())
+			if (err != nil) != test.wantError {
+				t.Fatalf("Login() error = %v, wantError = %t", err, test.wantError)
+			}
+			if client.loggedIn == test.wantError {
+				t.Fatalf("loggedIn = %t, want %t", client.loggedIn, !test.wantError)
+			}
+		})
+	}
+}
+
 func TestShutdownIfIdle(t *testing.T) {
 	for _, test := range []struct {
 		name         string

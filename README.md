@@ -1,6 +1,6 @@
 # PlexLink
 
-PlexLink is a small Go CLI that post-processes completed qBittorrent downloads. It identifies movies and TV/anime through TMDB and creates NTFS hardlinks in Plex-compatible directories. Torrent-owned source files are never moved, renamed, overwritten, or deleted.
+PlexLink is a small Go CLI that post-processes completed qBittorrent downloads. It identifies movies and TV/anime through TMDB, creates NTFS hardlinks in Plex-compatible directories, and writes a TMDB-verified `.plexmatch` hint for TV/anime series folders. Torrent-owned source files are never moved, renamed, overwritten, or deleted.
 
 ## Build
 
@@ -57,12 +57,12 @@ The TMDB token is an API Read Access Token (Bearer token). PlexLink uses `en-US`
 
 ```text
 plexlink doctor [--config config.yaml]
-plexlink process --hash INFOHASH [--dry-run] [--no-ai]
+plexlink process --hash INFOHASH [--dry-run] [--no-ai] [--debug]
 plexlink inspect --hash INFOHASH
 plexlink resolve --hash INFOHASH --tmdb-id ID
 ```
 
-Start with `doctor`, then test a real completed torrent with `process --dry-run`. `inspect` emits the full JSON evidence, candidates, score and link plan. A successful `resolve` remembers the explicit TMDB ID for that torrent hash in `state/resolutions.yaml`.
+Start with `doctor`, then test a real completed torrent with `process --dry-run`. Normal `process` output is concise: recognition result, verified media identity, processing status, target structure/actions, and qBittorrent shutdown outcome. Add `--debug` to print the full JSON evidence, candidates, resolver/AI diagnostics and plan. `inspect` is always detailed. A successful `resolve` remembers the explicit TMDB ID for that torrent hash in `state/resolutions.yaml`.
 
 AI fallback is disabled in `config.example.yaml`. When explicitly enabled, PlexLink uses the configured provider only after deterministic evidence is insufficient or to enrich a non-canonical episode mapping. AI may propose search queries or episode mappings, but PlexLink searches catalogs again and requires deterministic candidate agreement plus final TMDB verification before accepting canonical metadata. Provider timeouts, rate limits, server/auth errors, and invalid output are recorded as degraded diagnostics; they do not invalidate deterministic results or provisional mappings. `--no-ai` disables the fallback for one invocation. Structured AI results are cached under `state/ai-cache`; API keys, Authorization headers, absolute local paths, and raw responses are not stored.
 
@@ -73,6 +73,8 @@ Configure qBittorrent's completion hook only after dry-run validation:
 ```text
 "K:\plexlink-windows-amd64\plexlink.exe" process --config "K:\plexlink-windows-amd64\config.yaml" --hash "%I"
 ```
+
+PlexLink supports both the legacy qBittorrent login response (`200 OK` with `Ok.`) and the `204 No Content` response used by qBittorrent 5.2 and newer.
 
 To let PlexLink close qBittorrent after the final completed download is processed, disable qBittorrent's built-in "On downloads done" exit action and opt in through configuration:
 
@@ -85,6 +87,22 @@ PlexLink waits for processing to finish, allows a short grace window for concurr
 
 Point Plex TV libraries at the configured TV and anime targets, and the Plex Movie library at the movie target. Do not point PlexLink at the torrent source directories as targets.
 
+TV and anime use a clean series directory with a series-level `.plexmatch` (Plex Media Server 1.25.9+):
+
+```text
+Mad Men (2007)\
+├── .plexmatch
+└── Season 01\
+```
+
+```text
+Title: Mad Men
+Year: 2007
+TmdbId: 1104
+```
+
+Plex officially documents `.plexmatch` for TV Series, so movie folders continue to use the `{tmdb-ID}` naming hint. PlexLink does not migrate or delete directories created by older builds; old `{tmdb-ID}` TV/anime directories must be reviewed and removed manually after confirming the new layout in Plex.
+
 ## Safety behavior
 
 - Low confidence or an insufficient score margin returns `UNRESOLVED` and creates no media links.
@@ -93,6 +111,7 @@ Point Plex TV libraries at the configured TV and anime targets, and the Plex Mov
 - Anime absolute numbering is accepted only for one non-special TMDB season and an in-range episode.
 - An existing target hardlinked to the same source is a `NOOP`.
 - An existing target belonging to another file is a `CONFLICT`; it is never overwritten.
-- Dry-run creates neither directories nor hardlinks and does not persist unresolved reports.
+- An existing `.plexmatch` with identical content is a `NOOP`; different content is a `CONFLICT` and is never overwritten.
+- Dry-run creates neither directories, hardlinks, nor `.plexmatch` files and does not persist unresolved reports.
 
 Exit codes are stable: `0` success, `10` ignored, `20` unresolved, `21` anime numbering unresolved, `30` conflict, `40` configuration, `41` qBittorrent, `42` TMDB, `43` an operational AI failure when fallback was needed, and `50` filesystem/hardlink failure.

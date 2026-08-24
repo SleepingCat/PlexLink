@@ -12,6 +12,7 @@ import (
 
 	"github.com/SleepingCat/PlexLink/internal/ai"
 	"github.com/SleepingCat/PlexLink/internal/config"
+	"github.com/SleepingCat/PlexLink/internal/linker"
 	"github.com/SleepingCat/PlexLink/internal/model"
 	"github.com/SleepingCat/PlexLink/internal/release"
 )
@@ -179,6 +180,9 @@ func TestFullTVWorkflowDryRunThenLink(t *testing.T) {
 	if err != nil || len(r.Plan) != 1 {
 		t.Fatalf("dry run %+v %v", r, err)
 	}
+	if r.PlexMatch == nil || r.PlexMatch.Action != linker.Planned || r.PlexMatch.Content != "Title: Show\nYear: 2020\nTmdbId: 7\n" {
+		t.Fatalf("dry-run plexmatch=%+v", r.PlexMatch)
+	}
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Fatal("dry-run mutated target")
 	}
@@ -190,6 +194,43 @@ func TestFullTVWorkflowDryRunThenLink(t *testing.T) {
 	di, _ := os.Stat(r.Plan[0].Target)
 	if !os.SameFile(si, di) {
 		t.Fatal("target is not source hardlink")
+	}
+	if r.PlexMatch == nil || r.PlexMatch.Action != linker.Created {
+		t.Fatalf("plexmatch=%+v", r.PlexMatch)
+	}
+	matchContent, err := os.ReadFile(filepath.Join(target, "Show (2020)", ".plexmatch"))
+	if err != nil || string(matchContent) != "Title: Show\nYear: 2020\nTmdbId: 7\n" {
+		t.Fatalf("match file content=%q err=%v", matchContent, err)
+	}
+}
+
+func TestConflictingPlexMatchPreventsHardlinks(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(source, "Show.S01E01.mkv")
+	if err := os.WriteFile(src, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	matchDir := filepath.Join(target, "Show (2020)")
+	if err := os.MkdirAll(matchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(matchDir, ".plexmatch"), []byte("TmdbId: 99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Paths: config.Paths{TVSource: source, TVTarget: target, MovieSource: filepath.Join(root, "movies"), MovieTarget: filepath.Join(root, "mt"), AnimeSource: filepath.Join(root, "anime"), AnimeTarget: filepath.Join(root, "at")}, Matching: config.Matching{MinScore: 80, MinMargin: 15}, State: config.State{Directory: filepath.Join(root, "state")}}
+	p := Processor{Torrents: torrents{model.Torrent{Name: "Show S01", ContentPath: source, SavePath: source, Progress: 1}, []model.TorrentFile{{Name: "Show.S01E01.mkv", Priority: 1, Progress: 1}}}, Metadata: metadata{}, Config: cfg}
+	result, err := p.Process(context.Background(), "conflict", false, 0)
+	if !errors.Is(err, ErrConflict) || result.PlexMatch == nil || result.PlexMatch.Action != linker.Conflict {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	mediaTarget := filepath.Join(matchDir, "Season 01", "Show (2020) - S01E01.mkv")
+	if _, err := os.Stat(mediaTarget); !os.IsNotExist(err) {
+		t.Fatalf("hardlink created despite plexmatch conflict: %v", err)
 	}
 }
 

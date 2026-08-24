@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/SleepingCat/PlexLink/internal/doctor"
 	"github.com/SleepingCat/PlexLink/internal/ensemble/opensubtitles"
 	"github.com/SleepingCat/PlexLink/internal/kinopoisk"
+	"github.com/SleepingCat/PlexLink/internal/linker"
 	"github.com/SleepingCat/PlexLink/internal/qbt"
 	tmdbresolver "github.com/SleepingCat/PlexLink/internal/resolvers/tmdb"
 	"github.com/SleepingCat/PlexLink/internal/resolvers/tvmaze"
@@ -47,6 +49,7 @@ func run() int {
 	hash := fs.String("hash", "", "torrent infohash")
 	dry := fs.Bool("dry-run", false, "plan without filesystem changes")
 	noAI := fs.Bool("no-ai", false, "disable AI fallback for this run")
+	debug := fs.Bool("debug", false, "print full diagnostic JSON")
 	id := fs.Int("tmdb-id", 0, "explicit TMDB ID")
 	remember := fs.Bool("remember-alias", false, "reserved for a future release")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -172,13 +175,16 @@ func run() int {
 		shutdownCancel()
 		r.QBittorrentShutdown = diagnostic
 		if shutdownErr != nil {
-			slog.Warn("qBittorrent shutdown skipped", "torrent_hash", *hash, "error", shutdownErr)
+			if *debug {
+				slog.Warn("qBittorrent shutdown skipped", "torrent_hash", *hash, "error", shutdownErr)
+			}
 		}
 	}
-	b, _ := json.MarshalIndent(r, "", "  ")
-	fmt.Println(string(b))
+	writeProcessResult(os.Stdout, r, err, *dry, detailedOutput(cmd, *debug))
 	if err != nil {
-		slog.Error("processing failed", "torrent_hash", *hash, "error", err)
+		if *debug || cmd == "inspect" {
+			slog.Error("processing failed", "torrent_hash", *hash, "error", err)
+		}
 		switch {
 		case errors.Is(err, app.ErrIgnored):
 			return 10
@@ -204,6 +210,86 @@ func run() int {
 	return 0
 }
 func usage() { fmt.Fprintln(os.Stderr, "usage: plexlink <doctor|process|inspect|resolve> [options]") }
+
+func detailedOutput(command string, debug bool) bool {
+	return debug || command == "inspect"
+}
+
+func writeProcessResult(w io.Writer, result app.Result, processErr error, dryRun, debug bool) {
+	if debug {
+		b, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			fmt.Fprintf(w, "diagnostic output error: %v\n", err)
+			return
+		}
+		fmt.Fprintln(w, string(b))
+		return
+	}
+	if result.Match.ID <= 0 {
+		status := "ERROR"
+		switch {
+		case processErr == nil, errors.Is(processErr, app.ErrUnresolved), errors.Is(processErr, app.ErrAnimeNumbering):
+			status = "UNRESOLVED"
+		case errors.Is(processErr, app.ErrIgnored):
+			status = "SKIPPED"
+		}
+		fmt.Fprintf(w, "Recognition: %s\n", status)
+		if processErr != nil {
+			fmt.Fprintf(w, "Reason: %v\n", processErr)
+		}
+		return
+	}
+	fmt.Fprintln(w, "Recognition: SUCCESS")
+	fmt.Fprintf(w, "Media: %s (%d) [%s, TMDB %d]\n", result.Match.Name, result.Match.Year, result.Kind, result.Match.ID)
+	processing := "SUCCESS"
+	if processErr != nil {
+		processing = "ERROR"
+		if errors.Is(processErr, app.ErrConflict) {
+			processing = "CONFLICT"
+		}
+	}
+	fmt.Fprintf(w, "Processing: %s\n", processing)
+	if processErr != nil {
+		fmt.Fprintf(w, "Reason: %v\n", processErr)
+	}
+	if result.PlexMatch != nil || len(result.Plan) > 0 {
+		label := "Created structure:"
+		if dryRun {
+			label = "Planned structure:"
+		}
+		fmt.Fprintln(w, label)
+		if result.PlexMatch != nil {
+			fmt.Fprintf(w, "  [%s] %s\n", summaryAction(result.PlexMatch.Action, dryRun), result.PlexMatch.Target)
+		}
+		for i, plan := range result.Plan {
+			action := linker.Action("")
+			if i < len(result.Actions) {
+				action = result.Actions[i]
+			}
+			fmt.Fprintf(w, "  [%s] %s\n", summaryAction(action, dryRun), plan.Target)
+		}
+	}
+	if shutdown := result.QBittorrentShutdown; shutdown != nil {
+		switch {
+		case shutdown.Requested:
+			fmt.Fprintln(w, "qBittorrent: shutdown requested")
+		case shutdown.Error != "":
+			fmt.Fprintln(w, "qBittorrent: kept running (shutdown check failed)")
+		case shutdown.SkippedReason != "":
+			fmt.Fprintf(w, "qBittorrent: kept running (%s)\n", shutdown.SkippedReason)
+		}
+	}
+}
+
+func summaryAction(action linker.Action, dryRun bool) string {
+	if action != "" {
+		return string(action)
+	}
+	if dryRun {
+		return string(linker.Planned)
+	}
+	return "NOT_CREATED"
+}
 
 func shouldShutdownAfterProcess(enabled bool, command string, dryRun bool) bool {
 	return enabled && command == "process" && !dryRun
