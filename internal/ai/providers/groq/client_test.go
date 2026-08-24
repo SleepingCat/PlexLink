@@ -39,10 +39,10 @@ func TestIdentityRequestUsesCompoundWebSearchAndParsesHypothesis(t *testing.T) {
 	messages := got["messages"].([]any)
 	prompt := messages[0].(map[string]any)["content"].(string)
 	last := messages[len(messages)-1].(map[string]any)
-	if len(got) != 3 || got["model"] != "groq/compound-mini" || len(messages) < 2 || messages[0].(map[string]any)["role"] != "system" || last["role"] != "user" || len(tools) != 1 || tools[0] != "web_search" {
+	if len(got) != 4 || got["model"] != "groq/compound-mini" || got["temperature"] != float64(0) || len(messages) < 2 || messages[0].(map[string]any)["role"] != "system" || last["role"] != "user" || len(tools) != 1 || tools[0] != "web_search" {
 		t.Fatalf("wire=%+v", got)
 	}
-	for _, forbidden := range []string{"temperature", "max_completion_tokens", "citation_options", "response_format", "reasoning_effort", "reasoning_format"} {
+	for _, forbidden := range []string{"max_completion_tokens", "citation_options", "response_format", "reasoning_effort", "reasoning_format"} {
 		if got[forbidden] != nil {
 			t.Fatalf("unexpected %s in request", forbidden)
 		}

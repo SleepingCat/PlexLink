@@ -58,6 +58,7 @@ type message struct {
 type request struct {
 	Model          string         `json:"model"`
 	Messages       []message      `json:"messages"`
+	Temperature    int            `json:"temperature"`
 	CompoundCustom compoundCustom `json:"compound_custom"`
 }
 
@@ -100,6 +101,7 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 			{Role: "system", Content: productionPrompt()},
 			{Role: "user", Content: releaseInput(req.TorrentName)},
 		},
+		Temperature:    0,
 		CompoundCustom: compoundCustom{Tools: compoundTools{EnabledTools: []string{"web_search"}}},
 	})
 	if err != nil {
