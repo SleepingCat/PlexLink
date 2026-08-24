@@ -21,6 +21,13 @@ ai:
     # Alternative for a local gitignored config: api_key: "change-me"
     model: "openrouter/free"
     reasoning_effort: "minimal"
+  # To use Groq Compound Mini, set provider: "groq" and web_search: "require".
+  groq:
+    base_url: "https://api.groq.com/openai/v1"
+    api_key_env: "PLEXLINK_GROQ_API_KEY"
+    # Alternative for a local gitignored config: api_key: "change-me"
+    model: "groq/compound-mini"
+    timeout: "15s"
   xai:
     base_url: "https://api.x.ai/v1"
     api_key_env: "PLEXLINK_XAI_API_KEY"

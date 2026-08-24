@@ -141,6 +141,44 @@ func TestOpenRouterLiteralKeyDoesNotGainEnvironmentDefault(t *testing.T) {
 	}
 }
 
+func TestGroqDefaultsRequiredWebSearchAndSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\ntmdb:\n  token: token\nai:\n  enabled: true\n  provider: groq\n  web_search: require\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PLEXLINK_GROQ_API_KEY", "groq-key")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AI.Groq.BaseURL != "https://api.groq.com/openai/v1" || cfg.AI.Groq.Model != "groq/compound-mini" || cfg.AI.Groq.Timeout != "15s" || cfg.GroqTimeout().String() != "15s" {
+		t.Fatalf("Groq defaults=%+v", cfg.AI.Groq)
+	}
+	if key, err := cfg.AIKey(); err != nil || key != "groq-key" {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+	cfg.AI.WebSearch = "allow"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Groq accepted non-required web search")
+	}
+}
+
+func TestGroqLiteralKeyDoesNotGainEnvironmentDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\ntmdb:\n  token: token\nai:\n  enabled: true\n  provider: groq\n  web_search: require\n  groq:\n    api_key: literal-key\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AI.Groq.APIKeyEnv != "" || cfg.AI.Groq.APIKey != "literal-key" {
+		t.Fatalf("Groq config=%+v", cfg.AI.Groq)
+	}
+}
+
 func TestResolverDefaultsAndDisabledKeysAreOptional(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	data := []byte("qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\ntmdb:\n  token: token\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n")

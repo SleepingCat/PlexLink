@@ -28,6 +28,7 @@ Copy `config.example.yaml` to the gitignored `config.yaml` and adjust all paths.
 $env:PLEXLINK_QBT_PASSWORD = "..."
 $env:PLEXLINK_TMDB_TOKEN = "..."
 $env:PLEXLINK_XAI_API_KEY = "..." # only when ai.enabled is true
+$env:PLEXLINK_GROQ_API_KEY = "..." # when ai.provider is groq
 ```
 
 For a precompiled executable, secrets may instead be stored directly in the local configuration:
@@ -64,6 +65,8 @@ plexlink resolve --hash INFOHASH --tmdb-id ID
 Start with `doctor`, then test a real completed torrent with `process --dry-run`. `inspect` emits the full JSON evidence, candidates, score and link plan. A successful `resolve` remembers the explicit TMDB ID for that torrent hash in `state/resolutions.yaml`.
 
 AI fallback is disabled in `config.example.yaml`. When explicitly enabled, PlexLink uses the configured provider only after deterministic evidence is insufficient or to enrich a non-canonical episode mapping. AI may propose search queries or episode mappings, but PlexLink searches TMDB again and requires independent anchors before accepting canonical metadata. Provider timeouts, rate limits, server/auth errors, and invalid output are recorded as degraded diagnostics; they do not invalidate deterministic results or provisional mappings. `--no-ai` disables the fallback for one invocation. Structured AI results are cached under `state/ai-cache`; API keys, Authorization headers, absolute local paths, and raw responses are not stored.
+
+Groq is an optional identity-only consultant. Select it with `ai.provider: groq` and `ai.web_search: require`; it uses `groq/compound-mini` with one bounded web-search request and is never called per episode. Its title/year hypothesis enters the same catalog requery and TMDB verification path as other consultants and cannot directly create a match or link.
 
 Configure qBittorrent's completion hook only after dry-run validation:
 

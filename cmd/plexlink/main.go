@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SleepingCat/PlexLink/internal/ai/providers/gemini"
+	"github.com/SleepingCat/PlexLink/internal/ai/providers/groq"
 	"github.com/SleepingCat/PlexLink/internal/ai/providers/openrouter"
 	"github.com/SleepingCat/PlexLink/internal/ai/providers/xai"
 	"github.com/SleepingCat/PlexLink/internal/app"
@@ -103,6 +104,9 @@ func run() int {
 		case "openrouter":
 			p.AI, resolverErr = openrouter.New(openrouter.Config{BaseURL: cfg.AI.OpenRouter.BaseURL, APIKey: key, Model: cfg.AI.OpenRouter.Model, ReasoningEffort: cfg.AI.OpenRouter.ReasoningEffort, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
 			p.AIProvider, p.AIModel = "openrouter", cfg.AI.OpenRouter.Model
+		case "groq":
+			p.AI, resolverErr = groq.New(groq.Config{BaseURL: cfg.AI.Groq.BaseURL, APIKey: key, Model: cfg.AI.Groq.Model, MinConfidence: cfg.AI.MinConfidence}, &http.Client{Timeout: cfg.GroqTimeout()})
+			p.AIProvider, p.AIModel = "groq", cfg.AI.Groq.Model
 		case "gemini":
 			p.AI, resolverErr = gemini.New(gemini.Config{BaseURL: cfg.AI.Gemini.BaseURL, APIKey: key, Model: cfg.AI.Gemini.Model, MaxOutputTokens: cfg.AI.MaxOutputTokens}, aiHTTP)
 			p.AIProvider, p.AIModel = "gemini", cfg.AI.Gemini.Model

@@ -74,6 +74,7 @@ type AI struct {
 	XAI             XAI        `yaml:"xai"`
 	Gemini          Gemini     `yaml:"gemini"`
 	OpenRouter      OpenRouter `yaml:"openrouter"`
+	Groq            Groq       `yaml:"groq"`
 }
 
 type XAI struct {
@@ -97,6 +98,14 @@ type OpenRouter struct {
 	APIKey          string `yaml:"api_key"`
 	Model           string `yaml:"model"`
 	ReasoningEffort string `yaml:"reasoning_effort"`
+}
+
+type Groq struct {
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	APIKey    string `yaml:"api_key"`
+	Model     string `yaml:"model"`
+	Timeout   string `yaml:"timeout"`
 }
 
 type Paths struct {
@@ -173,6 +182,18 @@ func (c *Config) defaults() {
 	if c.AI.OpenRouter.ReasoningEffort == "" {
 		c.AI.OpenRouter.ReasoningEffort = "minimal"
 	}
+	if c.AI.Groq.BaseURL == "" {
+		c.AI.Groq.BaseURL = "https://api.groq.com/openai/v1"
+	}
+	if c.AI.Groq.APIKeyEnv == "" && c.AI.Groq.APIKey == "" {
+		c.AI.Groq.APIKeyEnv = "PLEXLINK_GROQ_API_KEY"
+	}
+	if c.AI.Groq.Model == "" {
+		c.AI.Groq.Model = "groq/compound-mini"
+	}
+	if c.AI.Groq.Timeout == "" {
+		c.AI.Groq.Timeout = "15s"
+	}
 	if c.AI.XAI.BaseURL == "" {
 		c.AI.XAI.BaseURL = "https://api.x.ai/v1"
 	}
@@ -243,8 +264,8 @@ func (c Config) Validate() error {
 	if c.Matching.MinScore < 1 || c.Matching.MinMargin < 0 {
 		return errors.New("invalid config: matching thresholds")
 	}
-	if c.AI.Provider != "" && c.AI.Provider != "xai" && c.AI.Provider != "gemini" && c.AI.Provider != "openrouter" {
-		return errors.New("invalid config: ai.provider must be openrouter, xai, or gemini")
+	if c.AI.Provider != "" && c.AI.Provider != "xai" && c.AI.Provider != "gemini" && c.AI.Provider != "openrouter" && c.AI.Provider != "groq" {
+		return errors.New("invalid config: ai.provider must be openrouter, groq, xai, or gemini")
 	}
 	if c.AI.WebSearch != "" && c.AI.WebSearch != "never" && c.AI.WebSearch != "allow" && c.AI.WebSearch != "require" {
 		return errors.New("invalid config: ai.web_search must be never, allow, or require")
@@ -255,6 +276,11 @@ func (c Config) Validate() error {
 	if c.AI.Timeout != "" {
 		if _, err := time.ParseDuration(c.AI.Timeout); err != nil {
 			return fmt.Errorf("invalid config: ai.timeout: %w", err)
+		}
+	}
+	if c.AI.Groq.Timeout != "" {
+		if _, err := time.ParseDuration(c.AI.Groq.Timeout); err != nil {
+			return fmt.Errorf("invalid config: ai.groq.timeout: %w", err)
 		}
 	}
 	if c.Resolvers.Timeout != "" {
@@ -302,6 +328,15 @@ func (c Config) Validate() error {
 	if c.AI.Enabled && c.AI.Provider == "openrouter" && (strings.TrimSpace(c.AI.OpenRouter.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.OpenRouter.APIKey) == "") {
 		return errors.New("invalid config: set exactly one of ai.openrouter.api_key_env or ai.openrouter.api_key")
 	}
+	if c.AI.Enabled && c.AI.Provider == "groq" && (strings.TrimSpace(c.AI.Groq.BaseURL) == "" || strings.TrimSpace(c.AI.Groq.Model) == "") {
+		return errors.New("invalid config: incomplete ai.groq configuration")
+	}
+	if c.AI.Enabled && c.AI.Provider == "groq" && c.AI.WebSearch != "require" {
+		return errors.New("invalid config: ai.web_search must be require for Groq")
+	}
+	if c.AI.Enabled && c.AI.Provider == "groq" && (strings.TrimSpace(c.AI.Groq.APIKeyEnv) == "") == (strings.TrimSpace(c.AI.Groq.APIKey) == "") {
+		return errors.New("invalid config: set exactly one of ai.groq.api_key_env or ai.groq.api_key")
+	}
 	if !validOpenRouterReasoningEffort(c.AI.OpenRouter.ReasoningEffort) {
 		return errors.New("invalid config: ai.openrouter.reasoning_effort must be none, minimal, low, medium, or high")
 	}
@@ -330,6 +365,12 @@ func (c Config) Token() (string, error) {
 	return secret(c.TMDB.TokenEnv, "TMDB token")
 }
 func (c Config) AIKey() (string, error) {
+	if c.AI.Provider == "groq" {
+		if c.AI.Groq.APIKey != "" {
+			return c.AI.Groq.APIKey, nil
+		}
+		return secret(c.AI.Groq.APIKeyEnv, "Groq API key")
+	}
 	if c.AI.Provider == "openrouter" {
 		if c.AI.OpenRouter.APIKey != "" {
 			return c.AI.OpenRouter.APIKey, nil
@@ -348,6 +389,10 @@ func (c Config) AIKey() (string, error) {
 	return secret(c.AI.XAI.APIKeyEnv, "xAI API key")
 }
 func (c Config) AITimeout() time.Duration { d, _ := time.ParseDuration(c.AI.Timeout); return d }
+func (c Config) GroqTimeout() time.Duration {
+	d, _ := time.ParseDuration(c.AI.Groq.Timeout)
+	return d
+}
 func (c Config) ResolverTimeout() time.Duration {
 	d, _ := time.ParseDuration(c.Resolvers.Timeout)
 	return d
