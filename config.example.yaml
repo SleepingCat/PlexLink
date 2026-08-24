@@ -2,6 +2,7 @@ qbittorrent:
   url: "http://127.0.0.1:8080"
   username: "admin"
   password_env: "PLEXLINK_QBT_PASSWORD"
+  shutdown_after_process: false
 tmdb:
   token_env: "PLEXLINK_TMDB_TOKEN"
   language: "en-US"

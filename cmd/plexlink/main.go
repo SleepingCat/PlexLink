@@ -29,6 +29,12 @@ import (
 
 var hashRE = regexp.MustCompile(`(?i)^[a-f0-9]{40}$`)
 
+const qbtShutdownGracePeriod = 3 * time.Second
+
+type idleShutdownClient interface {
+	ShutdownIfIdle(context.Context) (bool, error)
+}
+
 func main() { os.Exit(run()) }
 func run() int {
 	if len(os.Args) < 2 {
@@ -137,6 +143,7 @@ func run() int {
 		for _, diagnostic := range doctor.ResolverConfiguration(cfg.Resolvers) {
 			fmt.Println(diagnostic)
 		}
+		fmt.Printf("qBittorrent shutdown after process: enabled=%t\n", cfg.QBittorrent.ShutdownAfterProcess)
 		if cfg.Resolvers.Kinopoisk.Enabled {
 			fmt.Println(doctor.PoiskKinoStatus(ctx, kinopoiskClient))
 		}
@@ -159,6 +166,15 @@ func run() int {
 		*dry = true
 	}
 	r, err := p.ProcessWithOptions(ctx, *hash, app.ProcessOptions{DryRun: *dry, ManualID: *id, NoAI: *noAI})
+	if shouldShutdownAfterProcess(cfg.QBittorrent.ShutdownAfterProcess, cmd, *dry) {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		diagnostic, shutdownErr := shutdownAfterProcess(shutdownCtx, qc, qbtShutdownGracePeriod)
+		shutdownCancel()
+		r.QBittorrentShutdown = diagnostic
+		if shutdownErr != nil {
+			slog.Warn("qBittorrent shutdown skipped", "torrent_hash", *hash, "error", shutdownErr)
+		}
+	}
 	b, _ := json.MarshalIndent(r, "", "  ")
 	fmt.Println(string(b))
 	if err != nil {
@@ -188,3 +204,33 @@ func run() int {
 	return 0
 }
 func usage() { fmt.Fprintln(os.Stderr, "usage: plexlink <doctor|process|inspect|resolve> [options]") }
+
+func shouldShutdownAfterProcess(enabled bool, command string, dryRun bool) bool {
+	return enabled && command == "process" && !dryRun
+}
+
+func shutdownAfterProcess(ctx context.Context, client idleShutdownClient, gracePeriod time.Duration) (*app.QBittorrentShutdownDiagnostics, error) {
+	diagnostic := &app.QBittorrentShutdownDiagnostics{Enabled: true}
+	if gracePeriod > 0 {
+		timer := time.NewTimer(gracePeriod)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			diagnostic.Error = "qBittorrent shutdown grace period canceled"
+			return diagnostic, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	diagnostic.Attempted = true
+	requested, err := client.ShutdownIfIdle(ctx)
+	if err != nil {
+		diagnostic.Error = "qBittorrent idle check or shutdown failed"
+		return diagnostic, err
+	}
+	if !requested {
+		diagnostic.SkippedReason = "incomplete downloads remain"
+		return diagnostic, nil
+	}
+	diagnostic.Requested = true
+	return diagnostic, nil
+}

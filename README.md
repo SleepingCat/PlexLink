@@ -71,8 +71,17 @@ Groq is an optional identity-only consultant. Select it with `ai.provider: groq`
 Configure qBittorrent's completion hook only after dry-run validation:
 
 ```text
-"C:\path\plexlink.exe" process --hash "%I"
+"K:\plexlink-windows-amd64\plexlink.exe" process --config "K:\plexlink-windows-amd64\config.yaml" --hash "%I"
 ```
+
+To let PlexLink close qBittorrent after the final completed download is processed, disable qBittorrent's built-in "On downloads done" exit action and opt in through configuration:
+
+```yaml
+qbittorrent:
+  shutdown_after_process: true
+```
+
+PlexLink waits for processing to finish, allows a short grace window for concurrent completion hooks, and checks every torrent reported by qBittorrent. Shutdown is requested only when every torrent has `progress == 1` and `amount_left == 0`. Any torrent reported as downloading or stalled (`downloading`, `forcedDL`, `stalledDL`, or `stalledUP`) keeps qBittorrent running even if its numeric counters already look complete. Queued, paused, metadata-only, or otherwise incomplete downloads also keep it running. This never runs for `inspect`, `--dry-run`, `doctor`, or `resolve`. A failed idle check leaves qBittorrent running and does not undo an already completed hardlink result.
 
 Point Plex TV libraries at the configured TV and anime targets, and the Plex Movie library at the movie target. Do not point PlexLink at the torrent source directories as targets.
 

@@ -100,6 +100,56 @@ func (c *Client) GetFiles(ctx context.Context, hash string) ([]model.TorrentFile
 	}
 	return out, nil
 }
+
+// ShutdownIfIdle requests application shutdown only when qBittorrent reports
+// that no incomplete downloads remain. It never changes individual torrents.
+func (c *Client) ShutdownIfIdle(ctx context.Context) (bool, error) {
+	if err := c.ensure(ctx); err != nil {
+		return false, err
+	}
+	var torrents []struct {
+		Hash       string   `json:"hash"`
+		Progress   *float64 `json:"progress"`
+		AmountLeft *int64   `json:"amount_left"`
+		State      string   `json:"state"`
+	}
+	if err := c.getJSON(ctx, "/api/v2/torrents/info", &torrents); err != nil {
+		return false, fmt.Errorf("check incomplete downloads: %w", err)
+	}
+	for _, torrent := range torrents {
+		if torrent.Progress == nil || torrent.AmountLeft == nil || strings.TrimSpace(torrent.State) == "" {
+			return false, fmt.Errorf("check incomplete downloads: torrent %q has incomplete status data", torrent.Hash)
+		}
+		if *torrent.Progress < 0 || *torrent.Progress > 1 || *torrent.AmountLeft < 0 {
+			return false, fmt.Errorf("check incomplete downloads: torrent %q has invalid status data", torrent.Hash)
+		}
+		if *torrent.Progress < 1 || *torrent.AmountLeft > 0 || shutdownBlockedByState(torrent.State) {
+			return false, nil
+		}
+	}
+	resp, err := httpx.Do(ctx, c.http, func() (*http.Request, error) {
+		return http.NewRequest(http.MethodPost, c.base+"/api/v2/app/shutdown", nil)
+	})
+	if err != nil {
+		return false, fmt.Errorf("request qBittorrent shutdown: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("request qBittorrent shutdown: status %d", resp.StatusCode)
+	}
+	return true, nil
+}
+
+func shutdownBlockedByState(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "downloading", "forceddl", "stalleddl", "stalledup":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, v any) error {
 	resp, err := httpx.Do(ctx, c.http, func() (*http.Request, error) { return http.NewRequest(http.MethodGet, c.base+path, nil) })
 	if err != nil {

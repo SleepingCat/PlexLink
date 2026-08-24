@@ -40,7 +40,7 @@
 - daemon/service в MVP;
 - собственная база фильмов/сериалов;
 - автоматический поиск торрентов;
-- управление qBittorrent;
+- управление qBittorrent, кроме явно включаемого graceful shutdown после завершения `plexlink process`;
 - скачивание постеров;
 - изменение/переименование исходных файлов;
 - удаление файлов;
@@ -205,11 +205,12 @@ Source и target находятся на одном NTFS volume `K:`, поэто
 
 ## 3.2. Используемые qBittorrent API capabilities
 
-Нужны только:
+Нужны:
 
 - login;
 - torrent info по hash;
-- torrent file list по hash.
+- torrent file list по hash;
+- при включённом `qbittorrent.shutdown_after_process`: read-only проверка наличия незавершённых загрузок и `app/shutdown`, только когда таких загрузок нет.
 
 Получить:
 
@@ -233,7 +234,26 @@ priority / selected status
 progress
 ```
 
-Не нужно управлять торрентом.
+Не нужно управлять отдельными торрентами. PlexLink не меняет torrent state, paths, category, tags, queue, ratio или seeding.
+
+## 3.3. Опциональное закрытие qBittorrent
+
+```yaml
+qbittorrent:
+  shutdown_after_process: false
+```
+
+Настройка по умолчанию выключена. При `true` PlexLink после завершения обычной команды `process` выжидает короткое фиксированное grace window для параллельно запущенных completion hooks, получает через Web API полный список торрентов и только затем вызывает `POST /api/v2/app/shutdown`. Каждый торрент должен одновременно иметь `progress == 1` и `amount_left == 0`. Состояния `downloading`, `forcedDL`, `stalledDL` и `stalledUP` явно запрещают shutdown, даже если числовые поля уже показывают завершение; очередь незавершённой загрузки, пауза незавершённой загрузки, загрузка метаданных и любая неполная/некорректная API-запись также запрещают shutdown.
+
+Shutdown запрещён:
+
+- для `inspect`;
+- для `--dry-run`;
+- для `doctor` и `resolve`;
+- если осталась хотя бы одна незавершённая загрузка;
+- если idle-check завершился ошибкой.
+
+Ошибка shutdown не должна отменять уже выполненный safe filesystem result или менять его exit code. Она записывается как bounded diagnostic; qBittorrent в таком случае остаётся запущенным. PlexLink не удаляет torrents и не изменяет seeding state перед shutdown.
 
 ## 3.3. Проверки
 

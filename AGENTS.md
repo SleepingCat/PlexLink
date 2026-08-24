@@ -47,7 +47,7 @@ PlexLink must never:
 - overwrite source files;
 - change qBittorrent download paths;
 - remove torrents;
-- stop or modify seeding.
+- stop or modify individual torrent seeding; the only exception is the implicit application stop caused by the explicitly configured graceful qBittorrent shutdown.
 
 Allowed filesystem operations on media are intentionally limited.
 
@@ -140,6 +140,7 @@ Prefer plain structs and functions elsewhere.
 - qBittorrent Web API integration;
 - torrent lookup by infohash;
 - torrent file-list retrieval;
+- optional graceful qBittorrent shutdown after non-dry-run `process`, guarded by an incomplete-download check;
 - source-kind detection by configured root path;
 - release-name parsing;
 - TMDB search and metadata lookup;
@@ -249,9 +250,9 @@ Reasons:
 - access to the complete torrent file list;
 - easier testing.
 
-The qBittorrent client is read-only for v0.1.
+The qBittorrent client is read-only for torrent state in v0.1. The only allowed mutation is the explicitly configured application shutdown defined in `PLEXLINK_SPEC.md`, after PlexLink finishes and verifies that no incomplete downloads remain.
 
-Do not add API methods that mutate torrent state unless explicitly required.
+Do not add API methods that mutate torrent state. Shutdown must not remove torrents, stop individual torrents, change seeding state, or run from `inspect`/dry-run.
 
 ---
 

@@ -17,6 +17,21 @@ func TestLiteralAndEnvironmentSecretsAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestLoadQBittorrentShutdownAfterProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\n  shutdown_after_process: true\ntmdb:\n  token: token\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.QBittorrent.ShutdownAfterProcess {
+		t.Fatal("qbittorrent.shutdown_after_process was not loaded")
+	}
+}
+
 func TestXAIKeyCanBeLiteralOrEnvironment(t *testing.T) {
 	base := Config{QBittorrent: QBittorrent{URL: "http://qbt", Username: "user", Password: "secret"}, TMDB: TMDB{Token: "token"}, AI: AI{Enabled: true, Provider: "xai", WebSearch: "allow", MinConfidence: .9, Timeout: "45s", MaxOutputTokens: 1200, XAI: XAI{BaseURL: "https://api.x.ai/v1", Model: "model", APIKey: "literal-key"}}, Paths: Paths{TVSource: "tv", MovieSource: "movies", AnimeSource: "anime", TVTarget: "ptv", MovieTarget: "pmovies", AnimeTarget: "panime"}, Matching: Matching{MinScore: 80, MinMargin: 15}, State: State{Directory: "state"}}
 	if err := base.Validate(); err != nil {

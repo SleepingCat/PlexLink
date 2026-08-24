@@ -95,20 +95,30 @@ type ResolutionDiagnostics struct {
 	ScoringVersion          string `json:"scoring_version"`
 	EpisodeMappingVersion   string `json:"episode_mapping_version"`
 }
+
+type QBittorrentShutdownDiagnostics struct {
+	Enabled       bool   `json:"enabled"`
+	Attempted     bool   `json:"attempted"`
+	Requested     bool   `json:"requested"`
+	SkippedReason string `json:"skipped_reason,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
 type Result struct {
-	Torrent                model.Torrent             `json:"torrent"`
-	Kind                   model.Kind                `json:"kind"`
-	Evidence               model.Evidence            `json:"evidence"`
-	Candidates             []model.Match             `json:"candidates"`
-	Match                  model.Match               `json:"match"`
-	EpisodeValidation      []model.EpisodeValidation `json:"episode_validation,omitempty"`
-	MappingStatus          model.MappingStatus       `json:"mapping_status,omitempty"`
-	Plan                   []model.LinkPlan          `json:"plan"`
-	Actions                []linker.Action           `json:"actions"`
-	AI                     AIDiagnostics             `json:"ai"`
-	Ensemble               EnsembleDiagnostics       `json:"ensemble"`
-	Resolution             ResolutionDiagnostics     `json:"resolution"`
-	ReconciliationWarnings []string                  `json:"reconciliation_warnings,omitempty"`
+	Torrent                model.Torrent                   `json:"torrent"`
+	Kind                   model.Kind                      `json:"kind"`
+	Evidence               model.Evidence                  `json:"evidence"`
+	Candidates             []model.Match                   `json:"candidates"`
+	Match                  model.Match                     `json:"match"`
+	EpisodeValidation      []model.EpisodeValidation       `json:"episode_validation,omitempty"`
+	MappingStatus          model.MappingStatus             `json:"mapping_status,omitempty"`
+	Plan                   []model.LinkPlan                `json:"plan"`
+	Actions                []linker.Action                 `json:"actions"`
+	AI                     AIDiagnostics                   `json:"ai"`
+	Ensemble               EnsembleDiagnostics             `json:"ensemble"`
+	Resolution             ResolutionDiagnostics           `json:"resolution"`
+	QBittorrentShutdown    *QBittorrentShutdownDiagnostics `json:"qbittorrent_shutdown,omitempty"`
+	ReconciliationWarnings []string                        `json:"reconciliation_warnings,omitempty"`
 }
 
 type EnsembleDiagnostics struct {
