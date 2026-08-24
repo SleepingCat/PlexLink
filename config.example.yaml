@@ -2,10 +2,8 @@ qbittorrent:
   url: "http://127.0.0.1:8080"
   username: "admin"
   password_env: "PLEXLINK_QBT_PASSWORD"
-  # Alternative for a local gitignored config: password: "change-me"
 tmdb:
   token_env: "PLEXLINK_TMDB_TOKEN"
-  # Alternative for a local gitignored config: token: "change-me"
   language: "en-US"
 ai:
   enabled: false
@@ -18,14 +16,11 @@ ai:
   openrouter:
     base_url: "https://openrouter.ai/api/v1"
     api_key_env: "PLEXLINK_OPENROUTER_API_KEY"
-    # Alternative for a local gitignored config: api_key: "change-me"
     model: "openrouter/free"
     reasoning_effort: "minimal"
-  # To use Groq Compound Mini, set provider: "groq" and web_search: "require".
   groq:
     base_url: "https://api.groq.com/openai/v1"
     api_key_env: "PLEXLINK_GROQ_API_KEY"
-    # Alternative for a local gitignored config: api_key: "change-me"
     model: "groq/compound-mini"
     timeout: "15s"
   xai:
@@ -36,7 +31,6 @@ ai:
   gemini:
     base_url: "https://generativelanguage.googleapis.com/v1beta"
     api_key_env: "PLEXLINK_GEMINI_API_KEY"
-    # Alternative for a local gitignored config: api_key: "change-me"
     model: "gemini-2.5-flash"
 resolvers:
   timeout: "10s"

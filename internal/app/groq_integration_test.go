@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -102,5 +104,28 @@ func TestStrongFirstPassDoesNotCallGroq(t *testing.T) {
 	match, _, err := p.resolveEnsemble(context.Background(), model.KindMovie, "Sling Blade 1996", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "Sling Blade"}}, Year: 1996}, true, &result)
 	if err != nil || match.ID != 8973 || providerRequests.Load() != 0 || result.AI.Used {
 		t.Fatalf("match=%+v requests=%d diagnostics=%+v err=%v", match, providerRequests.Load(), result.AI, err)
+	}
+}
+
+func TestGroqHTTP400IsNonFatalAndExposesSanitizedDiagnostics(t *testing.T) {
+	var providerRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerRequests.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"unsupported field; token secret-key rejected"}}`))
+	}))
+	defer server.Close()
+	consultant, err := groq.New(groq.Config{BaseURL: server.URL, APIKey: "secret-key", Model: "groq/compound-mini", MinConfidence: .9}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := &orchestrationResolver{name: "tmdb", resolve: func(ensemble.ResolveRequest) ensemble.ResolverResult {
+		return ensemble.ResolverResult{Name: "tmdb", Status: ensemble.ResolverAbstain}
+	}}
+	p := Processor{Metadata: ensembleMetadata{}, Resolvers: []ensemble.Resolver{resolver}, AI: consultant, AIProvider: "groq", AIModel: "groq/compound-mini", Config: config.Config{AI: config.AI{Enabled: true, WebSearch: "require", MinConfidence: .9}, Resolvers: config.Resolvers{Timeout: "1s"}, State: config.State{Directory: t.TempDir()}}}
+	result := Result{}
+	_, _, err = p.resolveEnsemble(context.Background(), model.KindMovie, "Unknown.1996", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "Unknown"}}, Year: 1996}, true, &result)
+	if !errors.Is(err, ErrUnresolved) || providerRequests.Load() != 1 || result.AI.ProviderRequests != 1 || result.AI.HTTPStatus != 400 || result.AI.ProviderErrorCode != "400" || result.AI.ProviderError != "unsupported field; token [REDACTED] rejected" || !strings.Contains(result.AI.ProviderResponse, `"code":400`) || strings.Contains(result.AI.ProviderResponse, "secret-key") || result.AI.ProviderRequest == "" || strings.Contains(result.AI.ProviderRequest, "secret-key") || result.Ensemble.SecondPassUsed {
+		t.Fatalf("requests=%d diagnostics=%+v ensemble=%+v err=%v", providerRequests.Load(), result.AI, result.Ensemble, err)
 	}
 }

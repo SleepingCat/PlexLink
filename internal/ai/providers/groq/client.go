@@ -56,12 +56,9 @@ type message struct {
 }
 
 type request struct {
-	Model               string         `json:"model"`
-	Messages            []message      `json:"messages"`
-	Temperature         int            `json:"temperature"`
-	MaxCompletionTokens int            `json:"max_completion_tokens"`
-	CitationOptions     string         `json:"citation_options"`
-	CompoundCustom      compoundCustom `json:"compound_custom"`
+	Model          string         `json:"model"`
+	Messages       []message      `json:"messages"`
+	CompoundCustom compoundCustom `json:"compound_custom"`
 }
 
 type compoundCustom struct {
@@ -98,12 +95,9 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		return ai.Result{}, fmt.Errorf("%w: Groq supports movie and TV identity only", ai.ErrUnsupportedCapability)
 	}
 	payload, err := json.Marshal(request{
-		Model:               c.config.Model,
-		Messages:            []message{{Role: "system", Content: productionPrompt(req.TorrentName)}},
-		Temperature:         0,
-		MaxCompletionTokens: 1024,
-		CitationOptions:     "disabled",
-		CompoundCustom:      compoundCustom{Tools: compoundTools{EnabledTools: []string{"web_search"}}},
+		Model:          c.config.Model,
+		Messages:       []message{{Role: "system", Content: productionPrompt(req.TorrentName)}},
+		CompoundCustom: compoundCustom{Tools: compoundTools{EnabledTools: []string{"web_search"}}},
 	})
 	if err != nil {
 		return ai.Result{}, fmt.Errorf("encode Groq request: %w", err)
@@ -117,6 +111,7 @@ func (c *Client) Resolve(ctx context.Context, req ai.Request) (ai.Result, error)
 		return ai.Result{}, ai.WithProviderRequests(err, 1)
 	}
 	result.ProviderRequests = 1
+	result.ProviderRequest = c.sanitizePayload(payload)
 	return result, nil
 }
 
@@ -185,7 +180,7 @@ func (c *Client) call(ctx context.Context, payload []byte) (response, error) {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
-		return response{}, &ai.ProviderHTTPError{Provider: "groq", StatusCode: resp.StatusCode, ErrorCode: providerErrorCode(raw), RetryAfterSeconds: retryAfter, Message: c.safeError(raw)}
+		return response{}, &ai.ProviderHTTPError{Provider: "groq", StatusCode: resp.StatusCode, ErrorCode: providerErrorCode(raw), RetryAfterSeconds: retryAfter, Message: c.safeError(raw), SanitizedRequest: c.sanitizePayload(payload), SanitizedResponse: c.sanitizeErrorBody(raw)}
 	}
 	var wire response
 	if err := json.Unmarshal(raw, &wire); err != nil {
@@ -207,10 +202,38 @@ func providerErrorCode(raw []byte) string {
 }
 
 func (c *Client) safeError(raw []byte) string {
+	message := ""
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &envelope) == nil {
+		message = strings.TrimSpace(envelope.Error.Message)
+	}
+	if message == "" {
+		message = strings.TrimSpace(string(raw))
+	}
+	message = strings.ReplaceAll(message, c.config.APIKey, "[REDACTED]")
+	if len(message) > maxErrorBytes {
+		message = message[:maxErrorBytes]
+	}
+	return message
+}
+
+func (c *Client) sanitizeErrorBody(raw []byte) string {
 	message := strings.TrimSpace(string(raw))
 	message = strings.ReplaceAll(message, c.config.APIKey, "[REDACTED]")
 	if len(message) > maxErrorBytes {
 		message = message[:maxErrorBytes]
+	}
+	return message
+}
+
+func (c *Client) sanitizePayload(payload []byte) string {
+	message := strings.ReplaceAll(string(payload), c.config.APIKey, "[REDACTED]")
+	if len(message) > maxResponseBytes {
+		message = message[:maxResponseBytes]
 	}
 	return message
 }

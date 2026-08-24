@@ -107,6 +107,7 @@ type Result struct {
 	WebSearchUsed    *bool            `json:"-"`
 	ProviderRequests int              `json:"-"`
 	ActualModel      string           `json:"-"`
+	ProviderRequest  string           `json:"-"`
 }
 
 var (
@@ -135,6 +136,8 @@ type ProviderHTTPError struct {
 	ErrorCode         string
 	RetryAfterSeconds int
 	Message           string
+	SanitizedRequest  string
+	SanitizedResponse string
 }
 
 func (e *ProviderHTTPError) Error() string {

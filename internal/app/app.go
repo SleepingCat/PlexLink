@@ -80,6 +80,9 @@ type AIDiagnostics struct {
 	ProviderRequests  int        `json:"provider_requests"`
 	HTTPStatus        int        `json:"http_status,omitempty"`
 	ProviderErrorCode string     `json:"provider_error_code,omitempty"`
+	ProviderError     string     `json:"provider_error_message,omitempty"`
+	ProviderResponse  string     `json:"sanitized_provider_error_response,omitempty"`
+	ProviderRequest   string     `json:"sanitized_provider_request,omitempty"`
 	RetryAfterSeconds int        `json:"retry_after_seconds,omitempty"`
 	Hypothesis        *ai.Result `json:"hypothesis,omitempty"`
 	Verified          bool       `json:"-"`
@@ -675,6 +678,9 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 		if diagnostics, ok := ai.ProviderHTTPDiagnostics(err); ok {
 			result.AI.HTTPStatus = diagnostics.StatusCode
 			result.AI.ProviderErrorCode = diagnostics.ErrorCode
+			result.AI.ProviderError = diagnostics.Message
+			result.AI.ProviderResponse = diagnostics.SanitizedResponse
+			result.AI.ProviderRequest = diagnostics.SanitizedRequest
 			result.AI.RetryAfterSeconds = diagnostics.RetryAfterSeconds
 			if diagnostics.Provider != "" {
 				result.AI.Provider = diagnostics.Provider
@@ -693,6 +699,7 @@ func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) 
 	}
 	result.AI.ProviderRequests += resolved.ProviderRequests
 	result.AI.ActualModel = resolved.ActualModel
+	result.AI.ProviderRequest = resolved.ProviderRequest
 	if err := ai.Validate(req, resolved); err != nil {
 		return ai.Result{}, false, err
 	}

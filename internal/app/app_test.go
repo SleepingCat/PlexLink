@@ -275,11 +275,11 @@ func TestAIProviderErrorCreatesNoTarget(t *testing.T) {
 }
 
 func TestAIHTTPErrorPreservesSafeMetadata(t *testing.T) {
-	providerErr := &ai.ProviderHTTPError{Provider: "openrouter", StatusCode: 429, ErrorCode: "rate_limit", RetryAfterSeconds: 12, Message: "request limited"}
+	providerErr := &ai.ProviderHTTPError{Provider: "openrouter", StatusCode: 429, ErrorCode: "rate_limit", RetryAfterSeconds: 12, Message: "request limited", SanitizedRequest: `{"model":"safe"}`, SanitizedResponse: `{"error":"safe"}`}
 	p := Processor{AI: &fakeAI{err: ai.WithProviderRequests(providerErr, 1)}, AIProvider: "openrouter", AIModel: "openrouter/free", Config: config.Config{State: config.State{Directory: t.TempDir()}}}
 	result := Result{}
 	_, _, err := p.callAI(context.Background(), ai.Request{Task: ai.IdentifyMedia, Kind: model.KindMovie}, &result)
-	if err == nil || result.AI.HTTPStatus != 429 || result.AI.ProviderErrorCode != "rate_limit" || result.AI.RetryAfterSeconds != 12 || result.AI.Provider != "openrouter" {
+	if err == nil || result.AI.HTTPStatus != 429 || result.AI.ProviderErrorCode != "rate_limit" || result.AI.ProviderError != "request limited" || result.AI.ProviderRequest != `{"model":"safe"}` || result.AI.ProviderResponse != `{"error":"safe"}` || result.AI.RetryAfterSeconds != 12 || result.AI.Provider != "openrouter" {
 		t.Fatalf("diagnostics=%+v err=%v", result.AI, err)
 	}
 	wire, marshalErr := json.Marshal(result)

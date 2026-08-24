@@ -38,16 +38,19 @@ func TestIdentityRequestUsesCompoundWebSearchAndParsesHypothesis(t *testing.T) {
 	tools := got["compound_custom"].(map[string]any)["tools"].(map[string]any)["enabled_tools"].([]any)
 	messages := got["messages"].([]any)
 	prompt := messages[0].(map[string]any)["content"].(string)
-	if got["model"] != "groq/compound-mini" || got["temperature"] != float64(0) || got["max_completion_tokens"] != float64(1024) || got["citation_options"] != "disabled" || len(tools) != 1 || tools[0] != "web_search" {
+	if len(got) != 3 || got["model"] != "groq/compound-mini" || len(messages) != 1 || messages[0].(map[string]any)["role"] != "system" || len(tools) != 1 || tools[0] != "web_search" {
 		t.Fatalf("wire=%+v", got)
 	}
-	for _, forbidden := range []string{"response_format", "reasoning_effort", "reasoning_format"} {
+	for _, forbidden := range []string{"temperature", "max_completion_tokens", "citation_options", "response_format", "reasoning_effort", "reasoning_format"} {
 		if got[forbidden] != nil {
 			t.Fatalf("unexpected %s in request", forbidden)
 		}
 	}
 	if !strings.Contains(prompt, "Ottochennoe.Lezvie.1996.RUS.HDRip") || strings.Contains(prompt, "Sling Blade") || !strings.Contains(prompt, "MUST use web search") {
 		t.Fatalf("prompt=%q", prompt)
+	}
+	if result.ProviderRequest == "" || strings.Contains(result.ProviderRequest, "test-key") {
+		t.Fatalf("unsafe/missing sanitized request: %q", result.ProviderRequest)
 	}
 	if got := client.Capabilities(); got.StructuredOutput || !got.WebSearch || got.StructuredOutputWithWebSearch {
 		t.Fatalf("capabilities=%+v", got)
@@ -79,12 +82,12 @@ func TestHTTPFailuresAreNeverRetriedAndPreserveDiagnostics(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
 				w.WriteHeader(status)
-				_, _ = w.Write([]byte(`{"error":{"code":"provider_failure","message":"secret must not leak"}}`))
+				_, _ = w.Write([]byte(`{"error":{"code":"provider_failure","message":"invalid compound field for test-key"}}`))
 			}))
 			defer server.Close()
 			_, err := newTestClient(t, server, server.Client()).Resolve(context.Background(), identityRequest(model.KindMovie))
 			diagnostic, ok := ai.ProviderHTTPDiagnostics(err)
-			if !ok || diagnostic.Provider != "groq" || diagnostic.StatusCode != status || diagnostic.ErrorCode != "provider_failure" || calls.Load() != 1 || ai.ProviderRequestsFromError(err) != 1 {
+			if !ok || diagnostic.Provider != "groq" || diagnostic.StatusCode != status || diagnostic.ErrorCode != "provider_failure" || diagnostic.Message != "invalid compound field for [REDACTED]" || !strings.Contains(diagnostic.SanitizedResponse, `"code":"provider_failure"`) || strings.Contains(diagnostic.SanitizedResponse, "test-key") || diagnostic.SanitizedRequest == "" || strings.Contains(diagnostic.SanitizedRequest, "test-key") || calls.Load() != 1 || ai.ProviderRequestsFromError(err) != 1 {
 				t.Fatalf("calls=%d diagnostic=%+v err=%v", calls.Load(), diagnostic, err)
 			}
 		})
