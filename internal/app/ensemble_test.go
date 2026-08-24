@@ -179,6 +179,29 @@ func TestAIConsultantRunsOnceAndOneCatalogRequery(t *testing.T) {
 	if result.Ensemble.FinalDecision.Candidates[0].TotalScore != 500 {
 		t.Fatalf("AI confidence leaked into score: %+v", result.Ensemble.FinalDecision.Candidates[0])
 	}
+	if result.Ensemble.FirstPass == nil || result.Ensemble.FirstPass.Type != ensemble.DecisionNoEvidence {
+		t.Fatalf("first pass=%+v", result.Ensemble.FirstPass)
+	}
+	if len(aiResolver.requests) != 1 || aiResolver.requests[0].Task != ai.IdentifyMedia || len(aiResolver.requests[0].Candidates) != 0 {
+		t.Fatalf("AI request=%+v", aiResolver.requests)
+	}
+	if !containsString(aiResolver.requests[0].Parsed.Titles, "Отточенное лезвие") {
+		t.Fatalf("reverse-transliteration hypothesis was not sent to AI: %+v", aiResolver.requests[0].Parsed.Titles)
+	}
+}
+
+func TestEnsembleRequestAddsReverseTransliterationWithoutReplacingOriginal(t *testing.T) {
+	req := ensembleRequest(model.KindMovie, "Ottochennoe.Lezvie.1996", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "Ottochennoe Lezvie", Weight: 3}}, Year: 1996}, nil)
+	if req.Title != "Ottochennoe Lezvie" || !containsString(req.TitleHypotheses, "Отточенное лезвие") {
+		t.Fatalf("request=%+v", req)
+	}
+}
+
+func TestEnsembleRequeryPrioritizesNewAIHypotheses(t *testing.T) {
+	req := ensembleRequest(model.KindMovie, "Ottochennoe.Lezvie.1996", nil, model.Evidence{Titles: []model.WeightedTitle{{Title: "Ottochennoe Lezvie", Weight: 3}}, Year: 1996}, []string{"Sling Blade 1996", "Sling Blade"})
+	if len(req.TitleHypotheses) < 3 || req.TitleHypotheses[0] != "Sling Blade 1996" || req.TitleHypotheses[1] != "Sling Blade" || req.TitleHypotheses[2] != "Отточенное лезвие" {
+		t.Fatalf("hypotheses=%q", req.TitleHypotheses)
+	}
 }
 
 func TestAIAssistedGateAcceptsVerifiedCandidateWithoutInflatingScore(t *testing.T) {

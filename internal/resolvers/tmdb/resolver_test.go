@@ -3,6 +3,7 @@ package tmdbresolver
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/SleepingCat/PlexLink/internal/ensemble"
@@ -181,6 +182,26 @@ func TestTitleHypothesesAreBoundedAndCandidatesDeduped(t *testing.T) {
 	result := New(provider).Resolve(context.Background(), ensemble.ResolveRequest{Kind: model.KindMovie, Title: "One", TitleHypotheses: []string{"One", "Two", "Three", "Four", "Five", "Six", "Seven"}})
 	if result.Status != ensemble.ResolverOK || len(result.Candidates) != 1 {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestReverseTransliterationHypothesisIsSearchedAndDiagnosed(t *testing.T) {
+	provider := fakeMetadata{movies: map[string][]model.MovieCandidate{
+		"Отточенное лезвие": {{ID: 8973, Title: "Sling Blade", OriginalTitle: "Sling Blade", ReleaseDate: "1996-08-30"}},
+	}}
+	result := New(provider).Resolve(context.Background(), ensemble.ResolveRequest{
+		Kind: model.KindMovie, Title: "Ottochennoe Lezvie", TitleHypotheses: []string{"Отточенное лезвие"}, Year: 1996,
+	})
+	if result.Status != ensemble.ResolverOK || len(result.Candidates) != 1 || result.Candidates[0].Identity.TMDBID != 8973 {
+		t.Fatalf("result=%+v", result)
+	}
+	joined := strings.Join(result.Diagnostics, "\n")
+	if !strings.Contains(joined, `TMDB hypothesis "Ottochennoe Lezvie": MISS`) ||
+		!strings.Contains(joined, `TMDB hypothesis "Отточенное лезвие": HIT`) {
+		t.Fatalf("diagnostics=%q", result.Diagnostics)
+	}
+	if _, ok := findEvidence(result.Candidates[0], ensemble.EvidenceYearPrimaryExact); !ok {
+		t.Fatalf("year evidence=%+v", result.Candidates[0].Evidence)
 	}
 }
 

@@ -2,6 +2,7 @@ package kinopoisk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -48,5 +49,45 @@ func TestTokenRejectsHTTPAndMalformedSchema(t *testing.T) {
 				t.Fatal("invalid token response accepted")
 			}
 		})
+	}
+}
+
+func TestSearchCachesSuccessfulQueryWithinProcess(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		fmt.Fprint(w, `{"docs":[{"id":301,"name":"Матрица","year":1999,"type":"movie","externalId":{"tmdb":603}}],"total":1,"limit":10,"page":1,"pages":1}`)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "secret", server.Client())
+	for _, query := range []string{"Матрица", "  матрица "} {
+		response, err := client.Search(context.Background(), query)
+		if err != nil || len(response.Docs) != 1 || response.Docs[0].ID != 301 {
+			t.Fatalf("response=%+v err=%v", response, err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("HTTP requests=%d, want 1", requests)
+	}
+}
+
+func TestSearchLatchesDailyQuotaWithoutMoreHTTPRequests(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"statusCode":403,"error":"Forbidden","message":"Вы израсходовали ваш суточный лимит по запросам."}`)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "secret", server.Client())
+	for _, query := range []string{"Матрица", "Иваново детство"} {
+		_, err := client.Search(context.Background(), query)
+		var httpErr *HTTPError
+		if !errors.As(err, &httpErr) || !httpErr.DailyQuota || httpErr.StatusCode != http.StatusForbidden {
+			t.Fatalf("query=%q err=%+v", query, err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("HTTP requests=%d, want 1", requests)
 	}
 }

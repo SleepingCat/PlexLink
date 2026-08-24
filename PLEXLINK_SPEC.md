@@ -385,6 +385,16 @@ parsed media filenames   = 1 each
 
 TMDB умеет находить translated/alternative names, поэтому запрос `Мышь` должен оставаться допустимым кандидатом.
 
+Если исходный Latin title консервативно похож на русскую транслитерацию, PlexLink должен дополнительно построить ограниченный набор обратных Cyrillic hypotheses. Исходный title сохраняется первым, hypotheses дедуплицируются и имеют общий лимит; очевидные английские названия не должны порождать кириллический шум. Примеры:
+
+```text
+Ottochennoe Lezvie -> Отточенное лезвие
+Igra Prestolov     -> Игра престолов
+Chelovek Pauk      -> Человек паук
+```
+
+TMDB последовательно проверяет исходный title и эти hypotheses. Reverse transliteration является только дополнительным search input: найденный candidate всё равно проходит обычные year checks, scoring и финальную TMDB verification.
+
 ## 6.3. Не писать огромный regexp-parser
 
 Можно добавить небольшой слой project-specific normalization, но он должен быть ограниченным.
@@ -698,6 +708,7 @@ Resolver Ensemble должен нормально работать при час
 
 - не отвечает до timeout;
 - возвращает `429`;
+- возвращает provider-specific daily-quota response, например Kinopoisk.dev `403` с явным сообщением об исчерпанном суточном лимите;
 - возвращает `5xx`;
 - возвращает auth/config error;
 - меняет schema/формат ответа так, что adapter не может безопасно его распарсить;
@@ -721,6 +732,8 @@ Evidence Aggregator продолжает работу по всем оставш
 Если доступных evidence недостаточно, результат безопасно остаётся `UNRESOLVED`/`PARTIAL`; outage optional provider сам по себе не должен превращать процесс в fatal provider error.
 
 Постоянные ошибки конкретного provider должны отображаться в `doctor`/diagnostics, чтобы можно было заметить сломанный API contract или неверный key, но они не блокируют остальные источники.
+
+Provider-specific quota response должен классифицироваться как `RATE_LIMITED`, а не как authentication failure. После подтверждённого исчерпания суточной квоты adapter не должен продолжать заведомо бесполезные запросы в рамках текущего процесса. Повторяющиеся catalog queries между первым и AI-assisted pass должны переиспользовать уже полученный успешный ответ.
 
 Особый случай — TMDB как canonical metadata/final-validation source. Его failure в роли одного из ensemble resolvers также игнорируется как evidence-source failure. Но для **новой** canonical resolution PlexLink не создаёт target, требующий свежей TMDB verification/metadata, если TMDB недоступен и нет ранее сохранённого verified/cached canonical resolution. Уже принятый verified state может безопасно использоваться при временной недоступности TMDB.
 

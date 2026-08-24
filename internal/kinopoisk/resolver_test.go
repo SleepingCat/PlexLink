@@ -147,6 +147,26 @@ func TestResolverHTTPFailuresAreSafe(t *testing.T) {
 	}
 }
 
+func TestResolverStopsAfterDailyQuotaError(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"statusCode":403,"error":"Forbidden","message":"Вы израсходовали ваш суточный лимит по запросам."}`)
+	}))
+	defer server.Close()
+	resolver := NewResolver(NewClient(server.URL, "secret", server.Client()))
+	result := resolver.Resolve(context.Background(), ensemble.ResolveRequest{
+		Kind: model.KindMovie, Title: "Матрица", TitleHypotheses: []string{"The Matrix", "Matrix 1999"},
+	})
+	if result.Status != ensemble.ResolverError || result.Error == nil || result.Error.Kind != ensemble.ErrorRateLimited || result.Error.Retryable {
+		t.Fatalf("result=%+v", result)
+	}
+	if requests != 1 {
+		t.Fatalf("HTTP requests=%d, want 1", requests)
+	}
+}
+
 func TestResolverInvalidResponseAndCancellation(t *testing.T) {
 	t.Run("invalid", func(t *testing.T) {
 		r, closeServer := testResolver(t, http.StatusOK, `{not-json`)

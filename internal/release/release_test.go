@@ -80,6 +80,43 @@ func TestNormalizeTitleGeneralPunctuation(t *testing.T) {
 		t.Fatalf("punctuation variants differ: %q != %q", left, right)
 	}
 }
+
+func TestReverseTransliterationHypotheses(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "Ottochennoe Lezvie", want: "Отточенное лезвие"},
+		{input: "Igra Prestolov", want: "Игра престолов"},
+		{input: "Chelovek Pauk", want: "Человек паук"},
+	} {
+		got := ReverseTransliterationHypotheses(test.input)
+		if len(got) != 1 || got[0] != test.want {
+			t.Errorf("ReverseTransliterationHypotheses(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}
+
+func TestReverseTransliterationAvoidsObviousEnglishTitles(t *testing.T) {
+	for _, title := range []string{"Sling Blade", "Game of Thrones", "Charlie Chaplin"} {
+		if got := ReverseTransliterationHypotheses(title); len(got) != 0 {
+			t.Errorf("English title %q produced hypotheses %q", title, got)
+		}
+	}
+}
+
+func TestTitleHypothesesAreBoundedAndDeduplicated(t *testing.T) {
+	titles := []model.WeightedTitle{
+		{Title: "Ottochennoe Lezvie", Weight: 3},
+		{Title: "ottochennoe.lezvie", Weight: 2},
+		{Title: "Igra Prestolov", Weight: 1},
+	}
+	got := TitleHypotheses(titles, 1)
+	if len(got) != 1 || got[0] != "Отточенное лезвие" {
+		t.Fatalf("hypotheses=%q", got)
+	}
+}
+
 func TestAnimeAbsolute(t *testing.T) {
 	_, f := Parse(model.Torrent{Name: "[VARYG] Pluto", ContentPath: "Pluto"}, []model.TorrentFile{{Name: "[VARYG] Pluto - 03 [1080p].mkv", Priority: 1, Progress: 1}}, model.KindAnime)
 	if len(f) != 1 || !f[0].Ref.Absolute || f[0].Ref.Episode != 3 {

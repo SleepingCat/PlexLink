@@ -48,8 +48,12 @@ func (r *Resolver) Resolve(ctx context.Context, req ensemble.ResolveRequest) ens
 	for _, query := range queries {
 		response, err := r.client.Search(ctx, query)
 		if err != nil {
-			failures = append(failures, operationalError(err))
+			failure := operationalError(err)
+			failures = append(failures, failure)
 			if ctx.Err() != nil {
+				break
+			}
+			if failure.Kind == ensemble.ErrorRateLimited && !failure.Retryable {
 				break
 			}
 			continue
@@ -289,6 +293,9 @@ func operationalError(err error) *ensemble.OperationalError {
 	}
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
+		if httpErr.DailyQuota {
+			return &ensemble.OperationalError{Kind: ensemble.ErrorRateLimited, StatusCode: httpErr.StatusCode, Message: "kinopoisk daily request quota exhausted"}
+		}
 		switch httpErr.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
 			return &ensemble.OperationalError{Kind: ensemble.ErrorAuthentication, StatusCode: httpErr.StatusCode, Message: "kinopoisk authentication failed"}

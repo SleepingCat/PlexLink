@@ -538,6 +538,7 @@ func (p *Processor) ensembleConsultAI(ctx context.Context, req ensemble.ResolveR
 	for _, title := range req.ParsedEvidence.Titles {
 		titles = append(titles, title.Title)
 	}
+	titles = uniqueQueries(append(titles, req.TitleHypotheses...))
 	aiReq := ai.Request{Task: ai.IdentifyMedia, Kind: req.Kind, TorrentName: req.TorrentName, Files: sampledRelativeFiles(req.Files, 60, 12000), Parsed: ai.ParsedEvidence{Titles: titles, Year: req.Year, Episodes: req.ParsedEvidence.Episodes}, WebSearch: ai.WebSearchPolicy(p.Config.AI.WebSearch)}
 	for _, candidate := range decision.Candidates {
 		aiReq.Candidates = append(aiReq.Candidates, ai.Candidate{ID: candidate.TMDBID, Title: candidate.Identity.Title, Year: candidate.Identity.Year})
@@ -572,7 +573,12 @@ func ensembleRequest(kind model.Kind, torrentName string, media []model.MediaFil
 			break
 		}
 	}
-	return ensemble.ResolveRequest{Kind: kind, Title: title, TitleHypotheses: hypotheses, Year: evidence.Year, Season: season, Files: media, TorrentName: torrentName, ParsedEvidence: evidence}
+	titleHypotheses := append([]string(nil), hypotheses...)
+	titleHypotheses = uniqueQueries(append(titleHypotheses, release.TitleHypotheses(evidence.Titles, 4)...))
+	if len(titleHypotheses) > 8 {
+		titleHypotheses = titleHypotheses[:8]
+	}
+	return ensemble.ResolveRequest{Kind: kind, Title: title, TitleHypotheses: titleHypotheses, Year: evidence.Year, Season: season, Files: media, TorrentName: torrentName, ParsedEvidence: evidence}
 }
 
 func catalogResolvers(resolvers []ensemble.Resolver) []ensemble.Resolver {

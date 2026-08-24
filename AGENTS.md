@@ -914,13 +914,28 @@ For each stage:
 1. state briefly what will be implemented;
 2. implement the smallest coherent change;
 3. add/update tests;
-4. run:
+4. on the primary Windows development machine, run the local verification entry point:
    ```text
-   go test ./...
+   powershell -NoProfile -ExecutionPolicy Bypass -File K:\plexlink-windows-amd64\verify.ps1 -Fix
    ```
-5. fix failures;
-6. report what changed and any unresolved issue;
-7. continue only when the stage is stable.
+   On a machine without Go, add `-Bootstrap` once to install the pinned,
+   checksum-verified toolchain beside the script, outside the repository.
+   On other machines, run `gofmt`, `go mod verify`, `go test ./...`,
+   `go vet ./...`, and `go build ./cmd/plexlink` directly.
+5. diagnose the first real failure, fix its cause, and rerun a focused test when useful;
+6. rerun the full verification script and repeat until every check passes;
+7. report what changed and any unresolved issue;
+8. continue only when the stage is stable.
+
+The external verification script is the local equivalent of the CI quality gate. It
+checks `gofmt`, verifies modules, runs the complete test suite without cached
+results, runs `go vet`, and builds `K:\plexlink-windows-amd64\plexlink.exe`.
+Use `-RuntimeSmoke` when the live qBittorrent/TMDB/filesystem probes in the
+external `config.yaml` are explicitly required. Never weaken thresholds, delete
+regression fixtures, or skip a failing check merely to make the loop green.
+If a failure needs credentials, a live external service beyond that configured
+smoke check, destructive action,
+or a product decision outside the task, stop and report the exact blocker.
 
 When modifying architecture, explain the concrete problem the change solves.
 

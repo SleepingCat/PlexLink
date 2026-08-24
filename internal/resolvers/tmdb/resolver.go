@@ -2,6 +2,7 @@ package tmdbresolver
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,16 +52,21 @@ func (r *Resolver) resolveMovies(ctx context.Context, req ensemble.ResolveReques
 	byID := make(map[int]model.MovieCandidate)
 	searchSucceeded := false
 	searchFailed := false
+	var diagnostics []string
 	for _, query := range queries {
 		rows, err := r.metadata.SearchMovie(ctx, query)
 		if err != nil {
 			if ctx.Err() != nil {
-				return operationalFailure(ctx, "TMDB movie search failed")
+				failed := operationalFailure(ctx, "TMDB movie search failed")
+				failed.Diagnostics = appendBounded(diagnostics, fmt.Sprintf("TMDB hypothesis %q: ERROR", safeDiagnosticValue(query)))
+				return failed
 			}
 			searchFailed = true
+			diagnostics = appendBounded(diagnostics, fmt.Sprintf("TMDB hypothesis %q: ERROR", safeDiagnosticValue(query)))
 			continue
 		}
 		searchSucceeded = true
+		diagnostics = appendBounded(diagnostics, movieSearchDiagnostic(query, rows))
 		for _, row := range rows {
 			if row.ID > 0 {
 				byID[row.ID] = row
@@ -69,13 +75,15 @@ func (r *Resolver) resolveMovies(ctx context.Context, req ensemble.ResolveReques
 	}
 	if len(byID) == 0 {
 		if searchFailed {
-			return operationalFailure(ctx, "TMDB movie search failed")
+			failed := operationalFailure(ctx, "TMDB movie search failed")
+			failed.Diagnostics = diagnostics
+			return failed
 		}
-		return ensemble.ResolverResult{Name: source, Status: ensemble.ResolverAbstain}
+		return ensemble.ResolverResult{Name: source, Status: ensemble.ResolverAbstain, Diagnostics: diagnostics}
 	}
 
 	ids := sortedIDs(byID)
-	result := ensemble.ResolverResult{Name: source, Status: ensemble.ResolverOK}
+	result := ensemble.ResolverResult{Name: source, Status: ensemble.ResolverOK, Diagnostics: diagnostics}
 	if searchFailed && searchSucceeded {
 		result.Warnings = append(result.Warnings, "TMDB movie search partially failed")
 	}
@@ -131,16 +139,21 @@ func (r *Resolver) resolveTV(ctx context.Context, req ensemble.ResolveRequest) e
 	byID := make(map[int]model.TVCandidate)
 	searchSucceeded := false
 	searchFailed := false
+	var diagnostics []string
 	for _, query := range queries {
 		rows, err := r.metadata.SearchTV(ctx, query)
 		if err != nil {
 			if ctx.Err() != nil {
-				return operationalFailure(ctx, "TMDB TV search failed")
+				failed := operationalFailure(ctx, "TMDB TV search failed")
+				failed.Diagnostics = appendBounded(diagnostics, fmt.Sprintf("TMDB hypothesis %q: ERROR", safeDiagnosticValue(query)))
+				return failed
 			}
 			searchFailed = true
+			diagnostics = appendBounded(diagnostics, fmt.Sprintf("TMDB hypothesis %q: ERROR", safeDiagnosticValue(query)))
 			continue
 		}
 		searchSucceeded = true
+		diagnostics = appendBounded(diagnostics, tvSearchDiagnostic(query, rows))
 		for _, row := range rows {
 			if row.ID > 0 {
 				byID[row.ID] = row
@@ -149,13 +162,15 @@ func (r *Resolver) resolveTV(ctx context.Context, req ensemble.ResolveRequest) e
 	}
 	if len(byID) == 0 {
 		if searchFailed {
-			return operationalFailure(ctx, "TMDB TV search failed")
+			failed := operationalFailure(ctx, "TMDB TV search failed")
+			failed.Diagnostics = diagnostics
+			return failed
 		}
-		return ensemble.ResolverResult{Name: source, Status: ensemble.ResolverAbstain}
+		return ensemble.ResolverResult{Name: source, Status: ensemble.ResolverAbstain, Diagnostics: diagnostics}
 	}
 
 	ids := sortedIDs(byID)
-	result := ensemble.ResolverResult{Name: source, Status: ensemble.ResolverOK}
+	result := ensemble.ResolverResult{Name: source, Status: ensemble.ResolverOK, Diagnostics: diagnostics}
 	if searchFailed && searchSucceeded {
 		result.Warnings = append(result.Warnings, "TMDB TV search partially failed")
 	}
@@ -337,6 +352,38 @@ func appendBounded(values []string, value string) []string {
 		return values
 	}
 	return append(values, value)
+}
+
+func movieSearchDiagnostic(query string, rows []model.MovieCandidate) string {
+	query = safeDiagnosticValue(query)
+	if len(rows) == 0 {
+		return fmt.Sprintf("TMDB hypothesis %q: MISS", query)
+	}
+	first := rows[0]
+	return fmt.Sprintf("TMDB hypothesis %q: HIT candidates=%d first=%q (%d) tmdb=%d", query, len(rows), safeDiagnosticValue(first.Title), yearOf(first.ReleaseDate), first.ID)
+}
+
+func tvSearchDiagnostic(query string, rows []model.TVCandidate) string {
+	query = safeDiagnosticValue(query)
+	if len(rows) == 0 {
+		return fmt.Sprintf("TMDB hypothesis %q: MISS", query)
+	}
+	first := rows[0]
+	return fmt.Sprintf("TMDB hypothesis %q: HIT candidates=%d first=%q (%d) tmdb=%d", query, len(rows), safeDiagnosticValue(first.Name), yearOf(first.FirstAirDate), first.ID)
+}
+
+func safeDiagnosticValue(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if r < ' ' || r == '\u007f' {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(value))
+	runes := []rune(value)
+	if len(runes) > 120 {
+		value = string(runes[:120]) + "…"
+	}
+	return value
 }
 
 func yearOf(value string) int {
