@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -21,6 +22,9 @@ type Client struct {
 	apiKey      string
 	http        *http.Client
 	resultLimit int
+	mu          sync.Mutex
+	searchCache map[string]SearchResponse
+	quotaError  *HTTPError
 }
 
 func NewClient(baseURL, apiKey string, httpClient *http.Client) *Client {
@@ -30,7 +34,7 @@ func NewClient(baseURL, apiKey string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, http: httpClient, resultLimit: 10}
+	return &Client{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, http: httpClient, resultLimit: 10, searchCache: make(map[string]SearchResponse)}
 }
 
 type SearchResponse struct {
@@ -95,11 +99,28 @@ func (i *flexibleInt) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type HTTPError struct{ StatusCode int }
+type HTTPError struct {
+	StatusCode  int
+	DailyQuota  bool
+	SafeMessage string
+}
 
 func (e *HTTPError) Error() string { return fmt.Sprintf("kinopoisk returned HTTP %d", e.StatusCode) }
 
 func (c *Client) Search(ctx context.Context, query string) (SearchResponse, error) {
+	cacheKey := strings.ToLower(strings.TrimSpace(query))
+	c.mu.Lock()
+	if c.quotaError != nil {
+		err := *c.quotaError
+		c.mu.Unlock()
+		return SearchResponse{}, &err
+	}
+	if cached, ok := c.searchCache[cacheKey]; ok {
+		c.mu.Unlock()
+		return cloneSearchResponse(cached), nil
+	}
+	c.mu.Unlock()
+
 	endpoint, err := url.Parse(c.baseURL + "/v1.5/movie/search")
 	if err != nil {
 		return SearchResponse{}, fmt.Errorf("build search URL: %w", err)
@@ -121,8 +142,13 @@ func (c *Client) Search(ctx context.Context, query string) (SearchResponse, erro
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return SearchResponse{}, &HTTPError{StatusCode: resp.StatusCode}
+		httpErr := decodeHTTPError(resp)
+		if httpErr.DailyQuota {
+			c.mu.Lock()
+			c.quotaError = httpErr
+			c.mu.Unlock()
+		}
+		return SearchResponse{}, httpErr
 	}
 	var envelope struct {
 		Docs  json.RawMessage `json:"docs"`
@@ -145,7 +171,10 @@ func (c *Client) Search(ctx context.Context, query string) (SearchResponse, erro
 	if err := json.Unmarshal(envelope.Docs, &result.Docs); err != nil {
 		return SearchResponse{}, fmt.Errorf("decode search response: invalid docs array: %w", err)
 	}
-	return result, nil
+	c.mu.Lock()
+	c.searchCache[cacheKey] = cloneSearchResponse(result)
+	c.mu.Unlock()
+	return cloneSearchResponse(result), nil
 }
 
 func (c *Client) Token(ctx context.Context) (TokenInfo, error) {
@@ -165,8 +194,7 @@ func (c *Client) Token(ctx context.Context) (TokenInfo, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return TokenInfo{}, &HTTPError{StatusCode: resp.StatusCode}
+		return TokenInfo{}, decodeHTTPError(resp)
 	}
 	var wire struct {
 		RequestsLimit     *int    `json:"requestsLimit"`
@@ -182,4 +210,43 @@ func (c *Client) Token(ctx context.Context) (TokenInfo, error) {
 		return TokenInfo{}, fmt.Errorf("decode token response: incomplete token status")
 	}
 	return TokenInfo{RequestsLimit: *wire.RequestsLimit, RequestsUsed: *wire.RequestsUsed, RequestsRemaining: *wire.RequestsRemaining, TTL: *wire.TTL, ResetAt: *wire.ResetAt}, nil
+}
+
+func decodeHTTPError(resp *http.Response) *HTTPError {
+	httpErr := &HTTPError{StatusCode: resp.StatusCode}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	var wire struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &wire) == nil {
+		httpErr.SafeMessage = safeProviderMessage(wire.Message)
+	}
+	lower := strings.ToLower(httpErr.SafeMessage)
+	httpErr.DailyQuota = resp.StatusCode == http.StatusForbidden &&
+		((strings.Contains(lower, "суточ") && strings.Contains(lower, "лимит")) ||
+			(strings.Contains(lower, "daily") && (strings.Contains(lower, "limit") || strings.Contains(lower, "quota"))))
+	return httpErr
+}
+
+func safeProviderMessage(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if r < ' ' || r == '\u007f' {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(value))
+	runes := []rune(value)
+	if len(runes) > 200 {
+		value = string(runes[:200]) + "…"
+	}
+	return value
+}
+
+func cloneSearchResponse(in SearchResponse) SearchResponse {
+	out := in
+	out.Docs = append([]Movie(nil), in.Docs...)
+	for i := range out.Docs {
+		out.Docs[i].Names = append([]MovieName(nil), in.Docs[i].Names...)
+	}
+	return out
 }

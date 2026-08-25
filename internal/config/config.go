@@ -78,10 +78,11 @@ type TVMaze struct {
 }
 
 type QBittorrent struct {
-	URL         string `yaml:"url"`
-	Username    string `yaml:"username"`
-	PasswordEnv string `yaml:"password_env"`
-	Password    string `yaml:"password"`
+	URL                  string `yaml:"url"`
+	Username             string `yaml:"username"`
+	PasswordEnv          string `yaml:"password_env"`
+	Password             string `yaml:"password"`
+	ShutdownAfterProcess bool   `yaml:"shutdown_after_process"`
 }
 
 type TMDB struct {

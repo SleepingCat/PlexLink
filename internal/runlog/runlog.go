@@ -128,6 +128,17 @@ func (r *Run) Record(result app.Result, status string, exitCode int, processErr 
 			r.logger.Info("hardlink.action", args...)
 		}
 	}
+	if result.PlexMatch != nil {
+		args := []any{"event", "plexmatch.action", "action", result.PlexMatch.Action, "target", result.PlexMatch.Target}
+		if result.PlexMatch.Action == linker.Conflict {
+			r.logger.Warn("plexmatch.action", args...)
+		} else {
+			r.logger.Info("plexmatch.action", args...)
+		}
+	}
+	if shutdown := result.QBittorrentShutdown; shutdown != nil {
+		r.logger.Info("qbittorrent.shutdown", "event", "qbittorrent.shutdown", "enabled", shutdown.Enabled, "attempted", shutdown.Attempted, "requested", shutdown.Requested, "skipped_reason", shutdown.SkippedReason, "error", shutdown.Error)
+	}
 	args := []any{"event", "process.result", "status", status, "exit_code", exitCode}
 	if processErr != nil {
 		args = append(args, "error", processErr.Error())

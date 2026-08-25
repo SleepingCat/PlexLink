@@ -1,6 +1,6 @@
 # PlexLink — техническая спецификация для реализации
 
-> Revision 7 — 2026-08-21. Уточнена provenance-модель evidence: catalog external IDs используются для identity normalization, но сами по себе не являются match evidence. Исправлены правила TIME для missing year. Сохраняется целевая архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**. TMDB/OpenSubtitles/Kinopoisk.dev/TVMaze собирают evidence параллельно, результаты нормализуются к TMDB identity, затем ранжируются числовыми баллами с caps по evidence families и hard-conflict rules. OpenRouter не является ещё одним голосом: он консультант для неоднозначных случаев. TV/Anime mapping больше не all-or-nothing: подтверждённые файлы могут линковаться независимо, а свежий эпизод с надёжной show/season context может иметь состояние `PROVISIONAL`. TMDB остаётся canonical metadata provider и финальным validator.
+> Revision 8 — 2026-08-24. TV/Anime layout больше не включает `{tmdb-ID}` в имени series directory: проверенная TMDB identity записывается в детерминированный `.plexmatch` внутри этой папки. Movie layout сохраняет `{tmdb-ID}`, потому что Plex официально документирует `.plexmatch` только для TV Series. Сохраняется provenance-модель evidence и архитектура **Resolver Ensemble + Evidence Aggregator + AI Consultant**.
 
 ## 0. Цель
 
@@ -40,7 +40,7 @@
 - daemon/service в MVP;
 - собственная база фильмов/сериалов;
 - автоматический поиск торрентов;
-- управление qBittorrent;
+- управление qBittorrent, кроме явно включаемого graceful shutdown после завершения `plexlink process`;
 - скачивание постеров;
 - изменение/переименование исходных файлов;
 - удаление файлов;
@@ -79,6 +79,8 @@ MVP **никогда** не должен:
 os.MkdirAll(...)
 os.Link(source, target)
 ```
+
+После принятого TV/Anime match разрешена также контролируемая запись target-side файла `.plexmatch`. Он никогда не создаётся в source tree, не перезаписывается при конфликте и не создаётся в dry-run. Удалять разрешено только собственный неполный `.plexmatch`, если его первоначальная запись завершилась ошибкой.
 
 Плюс чтение файлов/метаданных и запись собственного state/log/cache.
 
@@ -205,11 +207,12 @@ Source и target находятся на одном NTFS volume `K:`, поэто
 
 ## 3.2. Используемые qBittorrent API capabilities
 
-Нужны только:
+Нужны:
 
 - login;
 - torrent info по hash;
-- torrent file list по hash.
+- torrent file list по hash;
+- при включённом `qbittorrent.shutdown_after_process`: read-only проверка наличия незавершённых загрузок и `app/shutdown`, только когда таких загрузок нет.
 
 Получить:
 
@@ -233,7 +236,26 @@ priority / selected status
 progress
 ```
 
-Не нужно управлять торрентом.
+Не нужно управлять отдельными торрентами. PlexLink не меняет torrent state, paths, category, tags, queue, ratio или seeding.
+
+## 3.3. Опциональное закрытие qBittorrent
+
+```yaml
+qbittorrent:
+  shutdown_after_process: false
+```
+
+Настройка по умолчанию выключена. При `true` PlexLink после завершения обычной команды `process` выжидает короткое фиксированное grace window для параллельно запущенных completion hooks, получает через Web API полный список торрентов и только затем вызывает `POST /api/v2/app/shutdown`. Каждый торрент должен одновременно иметь `progress == 1` и `amount_left == 0`. Состояния `downloading`, `forcedDL` и `stalledDL` явно запрещают shutdown, даже если числовые поля уже показывают завершение; очередь незавершённой загрузки, пауза незавершённой загрузки, загрузка метаданных и любая неполная/некорректная API-запись также запрещают shutdown. Завершённый `stalledUP` shutdown не блокирует.
+
+Shutdown запрещён:
+
+- для `inspect`;
+- для `--dry-run`;
+- для `doctor` и `resolve`;
+- если осталась хотя бы одна незавершённая загрузка;
+- если idle-check завершился ошибкой.
+
+Ошибка shutdown не должна отменять уже выполненный safe filesystem result или менять его exit code. Она записывается как bounded diagnostic; qBittorrent в таком случае остаётся запущенным. PlexLink не удаляет torrents и не изменяет seeding state перед shutdown.
 
 ## 3.3. Проверки
 
@@ -384,6 +406,16 @@ parsed media filenames   = 1 each
 Не выбрасывать кириллицу.
 
 TMDB умеет находить translated/alternative names, поэтому запрос `Мышь` должен оставаться допустимым кандидатом.
+
+Если исходный Latin title консервативно похож на русскую транслитерацию, PlexLink должен дополнительно построить ограниченный набор обратных Cyrillic hypotheses. Исходный title сохраняется первым, hypotheses дедуплицируются и имеют общий лимит; очевидные английские названия не должны порождать кириллический шум. Примеры:
+
+```text
+Ottochennoe Lezvie -> Отточенное лезвие
+Igra Prestolov     -> Игра престолов
+Chelovek Pauk      -> Человек паук
+```
+
+TMDB последовательно проверяет исходный title и эти hypotheses. Reverse transliteration является только дополнительным search input: найденный candidate всё равно проходит обычные year checks, scoring и финальную TMDB verification.
 
 ## 6.3. Не писать огромный regexp-parser
 
@@ -698,6 +730,7 @@ Resolver Ensemble должен нормально работать при час
 
 - не отвечает до timeout;
 - возвращает `429`;
+- возвращает provider-specific daily-quota response, например Kinopoisk.dev `403` с явным сообщением об исчерпанном суточном лимите;
 - возвращает `5xx`;
 - возвращает auth/config error;
 - меняет schema/формат ответа так, что adapter не может безопасно его распарсить;
@@ -721,6 +754,8 @@ Evidence Aggregator продолжает работу по всем оставш
 Если доступных evidence недостаточно, результат безопасно остаётся `UNRESOLVED`/`PARTIAL`; outage optional provider сам по себе не должен превращать процесс в fatal provider error.
 
 Постоянные ошибки конкретного provider должны отображаться в `doctor`/diagnostics, чтобы можно было заметить сломанный API contract или неверный key, но они не блокируют остальные источники.
+
+Provider-specific quota response должен классифицироваться как `RATE_LIMITED`, а не как authentication failure. После подтверждённого исчерпания суточной квоты adapter не должен продолжать заведомо бесполезные запросы в рамках текущего процесса. Повторяющиеся catalog queries между первым и AI-assisted pass должны переиспользовать уже полученный успешный ответ.
 
 Особый случай — TMDB как canonical metadata/final-validation source. Его failure в роли одного из ensemble resolvers также игнорируется как evidence-source failure. Но для **новой** canonical resolution PlexLink не создаёт target, требующий свежей TMDB verification/metadata, если TMDB недоступен и нет ранее сохранённого verified/cached canonical resolution. Уже принятый verified state может безопасно использоваться при временной недоступности TMDB.
 
@@ -1357,11 +1392,22 @@ Optional:
 
 ```text
 K:\plex\serials\
-└── Show Name (Year) {tmdb-123456}\
+└── Show Name (Year)\
+    ├── .plexmatch
     └── Season 02\
         ├── Show Name (Year) - S02E01.ext
         └── Show Name (Year) - S02E02.ext
 ```
+
+Series-level `.plexmatch` содержит только проверенные PlexLink значения:
+
+```text
+Title: Show Name
+Year: 2018
+TmdbId: 123456
+```
+
+Hint names case-insensitive в Plex; PlexLink использует показанный canonical casing и LF line endings. `TmdbId` достаточен для точной identity. `TvdbId`/`ImdbId` можно добавлять только если они независимо получены и проверены; PlexLink не должен их выдумывать или копировать из неподтверждённого candidate.
 
 `Season` должен быть именно английским словом.
 
@@ -1392,16 +1438,21 @@ K:\plex\films\
     └── Movie Name (Year) {tmdb-123456}.ext
 ```
 
+Movie сохраняет `{tmdb-ID}`: официальный `.plexmatch` contract Plex относится к TV Series и не является надёжной заменой movie ID hint.
+
 ## 10.3. Anime
 
 В Plex это TV library.
 
 ```text
 K:\plex\anime\
-└── Anime Name (Year) {tmdb-123456}\
+└── Anime Name (Year)\
+    ├── .plexmatch
     └── Season 01\
         └── Anime Name (Year) - S01E03.ext
 ```
+
+Anime использует тот же series-level `.plexmatch` с `TmdbId`, поскольку в Plex это TV library.
 
 ---
 
@@ -1485,6 +1536,18 @@ different file       → CONFLICT
 Для проверки использовать `os.Stat` + `os.SameFile` там, где это работает на Windows.
 
 Никогда автоматически не удалять conflict target.
+
+## 12.1. `.plexmatch` sidecar
+
+Перед созданием TV/Anime hardlinks проверить series-level `.plexmatch`:
+
+```text
+отсутствует                   → PLANNED / создать после media linking
+содержимое буквально совпало → NOOP
+существует с иным содержимым  → CONFLICT, не перезаписывать и не создавать новые hardlinks
+```
+
+Путь `.plexmatch` обязан находиться внутри соответствующего target root. Запись использует exclusive create, поэтому race не должен приводить к перезаписи чужого файла. Dry-run выполняет containment/existence/conflict checks, но не создаёт directory или sidecar.
 
 ---
 
@@ -1673,9 +1736,12 @@ Optional:
 
 ```text
 --no-ai
+--debug
 ```
 
-отключает AI fallback для конкретного запуска.
+`--no-ai` отключает AI fallback для конкретного запуска. `--debug` включает полный diagnostic JSON.
+
+Обычный production output должен быть кратким и пригодным для completion hook: результат распознавания, canonical title/year/TMDB ID, общий processing status, target structure с действиями `CREATED/NOOP/CONFLICT/PLANNED` и итог shutdown qBittorrent. Полные torrent/evidence/candidate/resolver/AI diagnostics выводятся только при `--debug` или через отдельную команду `inspect`.
 
 ### Dry-run
 
@@ -1691,7 +1757,7 @@ plexlink process --hash <hash> --dry-run
 plexlink process --hash <hash> --dry-run --no-ai
 ```
 
-Dry-run output должен показывать:
+Обычный dry-run output показывает результат распознавания и planned target structure. При `--debug` dry-run дополнительно должен показывать:
 
 - parsed evidence;
 - deterministic TMDB candidates/scoring;
@@ -1717,6 +1783,8 @@ plexlink inspect --hash <hash>
 - TMDB candidates;
 - score breakdown;
 - AI/cache diagnostics, если они есть.
+
+`inspect` всегда использует полный diagnostic JSON и не требует дополнительного `--debug`.
 
 ### Resolve
 
@@ -1938,11 +2006,13 @@ qBittorrent Web API использует session cookie.
 Client должен:
 
 1. login;
-2. сохранить SID cookie;
+2. сохранить возвращённую SID cookie, если qBittorrent её устанавливает;
 3. запросить torrent по hash;
 4. запросить torrent files.
 
 Можно использовать `cookiejar`.
+
+Успешный login совместим с обеими версиями Web API: legacy response `200 OK` с телом `Ok.` и qBittorrent 5.2+ response `204 No Content`. Другой HTTP status или неожидаемое тело legacy response считаются ошибкой авторизации. При включённом в qBittorrent обходе авторизации для localhost SID cookie может отсутствовать.
 
 Не делать login перед каждым HTTP request внутри одной обработки.
 
@@ -2049,7 +2119,7 @@ First-pass catalogs могут не распознать transliteration. Fake A
 
 ### Pantheon
 
-S01 и S02 должны попадать в один `Pantheon (2022) {tmdb-ID}` с разными Season directories.
+S01 и S02 должны попадать в один `Pantheon (2022)` с общим `.plexmatch` и разными Season directories.
 
 ### Pluto
 
@@ -2206,7 +2276,8 @@ AI tests не должны выполнять реальные hardlinks вне 
 - [ ] `--dry-run` ничего не меняет.
 - [ ] AI cache не содержит secrets.
 - [ ] TV/Movie hardlinks получают Plex layout.
-- [ ] Target includes year и `{tmdb-ID}`.
+- [ ] TV/Anime target включает year и series-level `.plexmatch` с проверенным `TmdbId`; Movie target включает year и `{tmdb-ID}`.
+- [ ] `.plexmatch` idempotent, conflict-aware и не создаётся в dry-run.
 - [ ] Повторная обработка idempotent.
 - [ ] Conflict не перезаписывается.
 - [ ] Source files никогда не меняются.
@@ -2243,7 +2314,7 @@ NO AniDB integration
 NO AniList integration
 NO ffprobe
 NO poster downloading
-NO Plex metadata writing
+NO Plex metadata writing, кроме узкого series match hint `.plexmatch`
 NO NFO generation
 NO automatic source cleanup
 NO copy fallback

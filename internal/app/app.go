@@ -96,20 +96,37 @@ type ResolutionDiagnostics struct {
 	ScoringVersion          string `json:"scoring_version"`
 	EpisodeMappingVersion   string `json:"episode_mapping_version"`
 }
+
+type QBittorrentShutdownDiagnostics struct {
+	Enabled       bool   `json:"enabled"`
+	Attempted     bool   `json:"attempted"`
+	Requested     bool   `json:"requested"`
+	SkippedReason string `json:"skipped_reason,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
+type PlexMatchDiagnostics struct {
+	Target  string        `json:"target"`
+	Content string        `json:"content"`
+	Action  linker.Action `json:"action"`
+}
+
 type Result struct {
-	Torrent                model.Torrent             `json:"torrent"`
-	Kind                   model.Kind                `json:"kind"`
-	Evidence               model.Evidence            `json:"evidence"`
-	Candidates             []model.Match             `json:"candidates"`
-	Match                  model.Match               `json:"match"`
-	EpisodeValidation      []model.EpisodeValidation `json:"episode_validation,omitempty"`
-	MappingStatus          model.MappingStatus       `json:"mapping_status,omitempty"`
-	Plan                   []model.LinkPlan          `json:"plan"`
-	Actions                []linker.Action           `json:"actions"`
-	AI                     AIDiagnostics             `json:"ai"`
-	Ensemble               EnsembleDiagnostics       `json:"ensemble"`
-	Resolution             ResolutionDiagnostics     `json:"resolution"`
-	ReconciliationWarnings []string                  `json:"reconciliation_warnings,omitempty"`
+	Torrent                model.Torrent                   `json:"torrent"`
+	Kind                   model.Kind                      `json:"kind"`
+	Evidence               model.Evidence                  `json:"evidence"`
+	Candidates             []model.Match                   `json:"candidates"`
+	Match                  model.Match                     `json:"match"`
+	EpisodeValidation      []model.EpisodeValidation       `json:"episode_validation,omitempty"`
+	MappingStatus          model.MappingStatus             `json:"mapping_status,omitempty"`
+	Plan                   []model.LinkPlan                `json:"plan"`
+	Actions                []linker.Action                 `json:"actions"`
+	PlexMatch              *PlexMatchDiagnostics           `json:"plexmatch,omitempty"`
+	AI                     AIDiagnostics                   `json:"ai"`
+	Ensemble               EnsembleDiagnostics             `json:"ensemble"`
+	Resolution             ResolutionDiagnostics           `json:"resolution"`
+	QBittorrentShutdown    *QBittorrentShutdownDiagnostics `json:"qbittorrent_shutdown,omitempty"`
+	ReconciliationWarnings []string                        `json:"reconciliation_warnings,omitempty"`
 }
 
 type EnsembleDiagnostics struct {
@@ -285,6 +302,24 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 	}
 	plannedConflict := removeDuplicateTargets(&r, media)
 	hadConflict := plannedConflict
+	if len(r.Plan) > 0 {
+		matchTarget, matchContent, applicable, err := plexpath.BuildMatchFile(targetRoot, kind, match)
+		if err != nil {
+			return r, err
+		}
+		if applicable {
+			r.PlexMatch = &PlexMatchDiagnostics{Target: matchTarget, Content: matchContent}
+			action, err := linker.WriteSidecar(targetRoot, matchTarget, []byte(matchContent), true)
+			if err != nil {
+				return r, err
+			}
+			r.PlexMatch.Action = action
+			if action == linker.Conflict {
+				r.MappingStatus = model.MappingConflict
+				return r, ErrConflict
+			}
+		}
+	}
 	for _, plan := range r.Plan {
 		action, err := linker.Link(sourceRoot, targetRoot, plan.Source, plan.Target, dry)
 		if err != nil {
@@ -297,6 +332,16 @@ func (p *Processor) ProcessWithOptions(ctx context.Context, hash string, options
 				mapping.State, mapping.Reason = model.EpisodeUnresolved, "target exists for a different source"
 			}
 			continue
+		}
+	}
+	if !dry && r.PlexMatch != nil {
+		action, err := linker.WriteSidecar(targetRoot, r.PlexMatch.Target, []byte(r.PlexMatch.Content), false)
+		if err != nil {
+			return r, err
+		}
+		r.PlexMatch.Action = action
+		if action == linker.Conflict {
+			hadConflict = true
 		}
 	}
 	if hadConflict {
@@ -539,6 +584,7 @@ func (p *Processor) ensembleConsultAI(ctx context.Context, req ensemble.ResolveR
 	for _, title := range req.ParsedEvidence.Titles {
 		titles = append(titles, title.Title)
 	}
+	titles = uniqueQueries(append(titles, req.TitleHypotheses...))
 	aiReq := ai.Request{Task: ai.IdentifyMedia, Kind: req.Kind, TorrentName: req.TorrentName, Files: sampledRelativeFiles(req.Files, 60, 12000), Parsed: ai.ParsedEvidence{Titles: titles, Year: req.Year, Episodes: req.ParsedEvidence.Episodes}, WebSearch: ai.WebSearchPolicy(p.Config.AI.WebSearch)}
 	for _, candidate := range decision.Candidates {
 		aiReq.Candidates = append(aiReq.Candidates, ai.Candidate{ID: candidate.TMDBID, Title: candidate.Identity.Title, Year: candidate.Identity.Year})
@@ -573,7 +619,12 @@ func ensembleRequest(kind model.Kind, torrentName string, media []model.MediaFil
 			break
 		}
 	}
-	return ensemble.ResolveRequest{Kind: kind, Title: title, TitleHypotheses: hypotheses, Year: evidence.Year, Season: season, Files: media, TorrentName: torrentName, ParsedEvidence: evidence}
+	titleHypotheses := append([]string(nil), hypotheses...)
+	titleHypotheses = uniqueQueries(append(titleHypotheses, release.TitleHypotheses(evidence.Titles, 4)...))
+	if len(titleHypotheses) > 8 {
+		titleHypotheses = titleHypotheses[:8]
+	}
+	return ensemble.ResolveRequest{Kind: kind, Title: title, TitleHypotheses: titleHypotheses, Year: evidence.Year, Season: season, Files: media, TorrentName: torrentName, ParsedEvidence: evidence}
 }
 
 func catalogResolvers(resolvers []ensemble.Resolver) []ensemble.Resolver {

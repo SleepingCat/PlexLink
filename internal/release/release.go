@@ -21,6 +21,23 @@ var (
 
 var mediaExt = map[string]bool{".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".webm": true, ".ts": true, ".m2ts": true}
 
+var reverseTransliterationSequences = []struct {
+	latin    string
+	cyrillic string
+}{
+	{"shch", "щ"}, {"sch", "щ"}, {"shh", "щ"},
+	{"yo", "ё"}, {"jo", "ё"}, {"zh", "ж"}, {"kh", "х"}, {"ts", "ц"},
+	{"ch", "ч"}, {"sh", "ш"}, {"yu", "ю"}, {"ju", "ю"}, {"ya", "я"},
+	{"ja", "я"}, {"ye", "е"}, {"je", "е"},
+}
+
+var reverseTransliterationLetters = map[byte]string{
+	'a': "а", 'b': "б", 'c': "к", 'd': "д", 'e': "е", 'f': "ф", 'g': "г",
+	'h': "х", 'i': "и", 'j': "й", 'k': "к", 'l': "л", 'm': "м", 'n': "н",
+	'o': "о", 'p': "п", 'q': "к", 'r': "р", 's': "с", 't': "т", 'u': "у",
+	'v': "в", 'w': "в", 'x': "кс", 'y': "ы", 'z': "з",
+}
+
 func IsMedia(name string) bool {
 	return mediaExt[strings.ToLower(filepath.Ext(name))] && !ignored.MatchString(name)
 }
@@ -101,6 +118,116 @@ func NormalizeTitle(s string) string {
 		}
 		return ' '
 	}, s)), " ")
+}
+
+// ReverseTransliterationHypotheses returns conservative Russian title guesses
+// for Latin text that has common Russian transliteration markers. The original
+// title remains authoritative input and is deliberately not returned here.
+func ReverseTransliterationHypotheses(title string) []string {
+	if !looksLikeRussianTransliteration(title) {
+		return nil
+	}
+	converted := reverseTransliterate(title)
+	if converted == "" || NormalizeTitle(converted) == NormalizeTitle(title) {
+		return nil
+	}
+	return []string{converted}
+}
+
+// TitleHypotheses derives a bounded, normalized-deduplicated set of additional
+// title queries without replacing any parsed title.
+func TitleHypotheses(titles []model.WeightedTitle, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	for _, title := range titles {
+		if key := NormalizeTitle(title.Title); key != "" {
+			seen[key] = true
+		}
+	}
+	result := make([]string, 0, limit)
+	for _, title := range titles {
+		for _, hypothesis := range ReverseTransliterationHypotheses(title.Title) {
+			key := NormalizeTitle(hypothesis)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			result = append(result, hypothesis)
+			if len(result) == limit {
+				return result
+			}
+		}
+	}
+	return result
+}
+
+func looksLikeRussianTransliteration(value string) bool {
+	words := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(value)), func(r rune) bool {
+		return r == ' ' || r == '.' || r == '_' || r == '-'
+	})
+	if len(words) < 2 {
+		return false
+	}
+	for _, word := range words {
+		for _, r := range word {
+			if r < 'a' || r > 'z' {
+				return false
+			}
+		}
+	}
+	lower := strings.Join(words, " ")
+	for _, marker := range []string{"shch", "sch", "shh", "zh", "kh", "ts", "ya", "yu", "yo"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	for _, word := range words {
+		for _, suffix := range []string{"ennoe", "ennaya", "ennyi", "enie", "stvo", "ovek", "auk", "skiy", "skaya", "aya", "oye", "oe", "ova", "eva", "ov", "ev", "ina", "iy", "yy"} {
+			if len(word) > len(suffix) && strings.HasSuffix(word, suffix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func reverseTransliterate(value string) string {
+	words := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(value)), func(r rune) bool {
+		return r == ' ' || r == '.' || r == '_' || r == '-'
+	})
+	converted := make([]string, 0, len(words))
+	for _, word := range words {
+		var out strings.Builder
+		for i := 0; i < len(word); {
+			matched := false
+			for _, sequence := range reverseTransliterationSequences {
+				if strings.HasPrefix(word[i:], sequence.latin) {
+					out.WriteString(sequence.cyrillic)
+					i += len(sequence.latin)
+					matched = true
+					break
+				}
+			}
+			if matched {
+				continue
+			}
+			letter, ok := reverseTransliterationLetters[word[i]]
+			if !ok {
+				return ""
+			}
+			out.WriteString(letter)
+			i++
+		}
+		converted = append(converted, out.String())
+	}
+	result := []rune(strings.Join(converted, " "))
+	if len(result) == 0 {
+		return ""
+	}
+	result[0] = unicode.ToUpper(result[0])
+	return string(result)
 }
 
 func isApostrophe(r rune) bool {
