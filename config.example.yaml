@@ -58,3 +58,8 @@ matching:
   min_margin: 15
 state:
   directory: "C:\\Users\\Kenny\\AppData\\Local\\PlexLink"
+logging:
+  enabled: true
+  level: "info"
+  directory: ""
+  max_total_mb: 50

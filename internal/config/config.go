@@ -20,6 +20,34 @@ type Config struct {
 	Paths       Paths       `yaml:"paths"`
 	Matching    Matching    `yaml:"matching"`
 	State       State       `yaml:"state"`
+	Logging     Logging     `yaml:"logging"`
+}
+
+type Logging struct {
+	Enabled     bool   `yaml:"enabled"`
+	Level       string `yaml:"level"`
+	Directory   string `yaml:"directory"`
+	MaxTotalMB  int    `yaml:"max_total_mb"`
+	enabledSet  bool
+	maxTotalSet bool
+}
+
+func (l *Logging) UnmarshalYAML(node *yaml.Node) error {
+	type plain Logging
+	var decoded plain
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	*l = Logging(decoded)
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		switch node.Content[i].Value {
+		case "enabled":
+			l.enabledSet = true
+		case "max_total_mb":
+			l.maxTotalSet = true
+		}
+	}
+	return nil
 }
 
 type Resolvers struct {
@@ -143,6 +171,15 @@ func Load(path string) (Config, error) {
 }
 
 func (c *Config) defaults() {
+	if !c.Logging.enabledSet {
+		c.Logging.Enabled = true
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = "info"
+	}
+	if !c.Logging.maxTotalSet {
+		c.Logging.MaxTotalMB = 50
+	}
 	if c.TMDB.URL == "" {
 		c.TMDB.URL = "https://api.themoviedb.org/3"
 	}
@@ -264,6 +301,14 @@ func (c Config) Validate() error {
 	if c.Matching.MinScore < 1 || c.Matching.MinMargin < 0 {
 		return errors.New("invalid config: matching thresholds")
 	}
+	if c.Logging.maxTotalSet && c.Logging.MaxTotalMB <= 0 {
+		return errors.New("invalid config: logging.max_total_mb must be positive")
+	}
+	switch strings.ToLower(c.Logging.Level) {
+	case "", "debug", "info", "warn", "error":
+	default:
+		return errors.New("invalid config: logging.level must be debug, info, warn, or error")
+	}
 	if c.AI.Provider != "" && c.AI.Provider != "xai" && c.AI.Provider != "gemini" && c.AI.Provider != "openrouter" && c.AI.Provider != "groq" {
 		return errors.New("invalid config: ai.provider must be openrouter, groq, xai, or gemini")
 	}
@@ -341,6 +386,13 @@ func (c Config) Validate() error {
 		return errors.New("invalid config: ai.openrouter.reasoning_effort must be none, minimal, low, medium, or high")
 	}
 	return nil
+}
+
+func (c Config) LoggingDirectory() string {
+	if strings.TrimSpace(c.Logging.Directory) != "" {
+		return c.Logging.Directory
+	}
+	return filepath.Join(c.State.Directory, "logs")
 }
 
 func validOpenRouterReasoningEffort(value string) bool {

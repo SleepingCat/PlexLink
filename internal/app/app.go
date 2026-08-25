@@ -65,28 +65,29 @@ type ProcessOptions struct {
 type dryRunContextKey struct{}
 
 type AIDiagnostics struct {
-	Used              bool       `json:"ai_used"`
-	Provider          string     `json:"provider,omitempty"`
-	Model             string     `json:"configured_model,omitempty"`
-	ActualModel       string     `json:"actual_model,omitempty"`
-	FinishReason      string     `json:"finish_reason,omitempty"`
-	CompletionTokens  int        `json:"completion_tokens,omitempty"`
-	ReasoningTokens   int        `json:"reasoning_tokens,omitempty"`
-	PromptVersion     string     `json:"prompt_version,omitempty"`
-	WebSearchPolicy   string     `json:"web_search_policy,omitempty"`
-	WebSearchUsed     *bool      `json:"web_search_used,omitempty"`
-	CacheHit          bool       `json:"cache_hit"`
-	Calls             int        `json:"calls"`
-	ProviderRequests  int        `json:"provider_requests"`
-	HTTPStatus        int        `json:"http_status,omitempty"`
-	ProviderErrorCode string     `json:"provider_error_code,omitempty"`
-	ProviderError     string     `json:"provider_error_message,omitempty"`
-	ProviderResponse  string     `json:"sanitized_provider_error_response,omitempty"`
-	ProviderRequest   string     `json:"sanitized_provider_request,omitempty"`
-	RetryAfterSeconds int        `json:"retry_after_seconds,omitempty"`
-	Hypothesis        *ai.Result `json:"hypothesis,omitempty"`
-	Verified          bool       `json:"-"`
-	Error             string     `json:"error,omitempty"`
+	Used              bool          `json:"ai_used"`
+	Provider          string        `json:"provider,omitempty"`
+	Model             string        `json:"configured_model,omitempty"`
+	ActualModel       string        `json:"actual_model,omitempty"`
+	FinishReason      string        `json:"finish_reason,omitempty"`
+	CompletionTokens  int           `json:"completion_tokens,omitempty"`
+	ReasoningTokens   int           `json:"reasoning_tokens,omitempty"`
+	PromptVersion     string        `json:"prompt_version,omitempty"`
+	WebSearchPolicy   string        `json:"web_search_policy,omitempty"`
+	WebSearchUsed     *bool         `json:"web_search_used,omitempty"`
+	CacheHit          bool          `json:"cache_hit"`
+	Calls             int           `json:"calls"`
+	ProviderRequests  int           `json:"provider_requests"`
+	HTTPStatus        int           `json:"http_status,omitempty"`
+	ProviderErrorCode string        `json:"provider_error_code,omitempty"`
+	ProviderError     string        `json:"provider_error_message,omitempty"`
+	ProviderResponse  string        `json:"sanitized_provider_error_response,omitempty"`
+	ProviderRequest   string        `json:"sanitized_provider_request,omitempty"`
+	RetryAfterSeconds int           `json:"retry_after_seconds,omitempty"`
+	Hypothesis        *ai.Result    `json:"hypothesis,omitempty"`
+	Verified          bool          `json:"-"`
+	Error             string        `json:"error,omitempty"`
+	Duration          time.Duration `json:"duration,omitempty"`
 }
 
 type ResolutionDiagnostics struct {
@@ -779,6 +780,8 @@ func (p *Processor) resolveAI(ctx context.Context, kind model.Kind, torrentName 
 }
 
 func (p *Processor) callAI(ctx context.Context, req ai.Request, result *Result) (ai.Result, bool, error) {
+	started := time.Now()
+	defer func() { result.AI.Duration += time.Since(started) }()
 	result.AI.Used, result.AI.Provider, result.AI.Model, result.AI.PromptVersion, result.AI.WebSearchPolicy = true, p.AIProvider, p.AIModel, ai.PromptVersion, string(req.WebSearch)
 	key, err := ai.Fingerprint(req, p.AIProvider, p.AIModel)
 	if err != nil {

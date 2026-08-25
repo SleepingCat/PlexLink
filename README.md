@@ -74,6 +74,24 @@ Configure qBittorrent's completion hook only after dry-run validation:
 "C:\path\plexlink.exe" process --hash "%I"
 ```
 
+## Persistent process logs
+
+Every `process` invocation writes a compact log to `state/logs/runs` by default. The location and combined storage budget are configurable:
+
+```yaml
+logging:
+  enabled: true
+  level: "info"
+  directory: ""       # empty means <state.directory>/logs
+  max_total_mb: 50
+```
+
+`logs/failed` contains short incident summaries only when a completed torrent was not fully processed and requires attention, such as `UNRESOLVED`, `PARTIAL`, `CONFLICT`, or a hardlink/provider operation that prevented completion. Failures of optional metadata or AI providers do not create a failed entry when PlexLink still completes every relevant file successfully. A `NOOP` is also successful.
+
+The `runs` and `failed` directories share one size budget. After each invocation PlexLink removes the oldest finalized `.log` files across both directories until they fit; active `.tmp` files are not cleanup candidates. There is no age-based retention.
+
+For a background-run failure, open the newest file in `logs/failed`. It lists affected files, points to the full run log, and includes a PowerShell replay command using the actual executable, config path, torrent hash, and `--debug`.
+
 Point Plex TV libraries at the configured TV and anime targets, and the Plex Movie library at the movie target. Do not point PlexLink at the torrent source directories as targets.
 
 ## Safety behavior

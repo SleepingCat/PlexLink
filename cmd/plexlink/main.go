@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/SleepingCat/PlexLink/internal/qbt"
 	tmdbresolver "github.com/SleepingCat/PlexLink/internal/resolvers/tmdb"
 	"github.com/SleepingCat/PlexLink/internal/resolvers/tvmaze"
+	"github.com/SleepingCat/PlexLink/internal/runlog"
 	"github.com/SleepingCat/PlexLink/internal/tmdb"
 )
 
@@ -41,6 +43,7 @@ func run() int {
 	hash := fs.String("hash", "", "torrent infohash")
 	dry := fs.Bool("dry-run", false, "plan without filesystem changes")
 	noAI := fs.Bool("no-ai", false, "disable AI fallback for this run")
+	debug := fs.Bool("debug", false, "include debug diagnostics")
 	id := fs.Int("tmdb-id", 0, "explicit TMDB ID")
 	remember := fs.Bool("remember-alias", false, "reserved for a future release")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -158,29 +161,37 @@ func run() int {
 	if cmd == "inspect" {
 		*dry = true
 	}
+	var persistent *runlog.Run
+	if cmd == "process" && cfg.Logging.Enabled {
+		executable, executableErr := os.Executable()
+		if executableErr != nil {
+			executable = os.Args[0]
+		}
+		executable, _ = filepath.Abs(executable)
+		actualConfig, _ := filepath.Abs(*cfgPath)
+		level := cfg.Logging.Level
+		if *debug {
+			level = "debug"
+		}
+		persistent, err = runlog.Start(runlog.Options{Directory: cfg.LoggingDirectory(), Level: level, Hash: *hash, ConfigPath: actualConfig, Executable: executable, MaxBytes: int64(cfg.Logging.MaxTotalMB) * 1024 * 1024})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "persistent logging disabled:", err)
+		}
+	}
 	r, err := p.ProcessWithOptions(ctx, *hash, app.ProcessOptions{DryRun: *dry, ManualID: *id, NoAI: *noAI})
 	b, _ := json.MarshalIndent(r, "", "  ")
 	fmt.Println(string(b))
+	exitCode := processExitCode(err)
+	status, attention := processLogOutcome(r, err)
+	if persistent != nil {
+		persistent.Record(r, status, exitCode, err)
+		if _, _, logErr := persistent.Finalize(r, status, exitCode, attention, err); logErr != nil {
+			fmt.Fprintln(os.Stderr, "finalize persistent log:", logErr)
+		}
+	}
 	if err != nil {
 		slog.Error("processing failed", "torrent_hash", *hash, "error", err)
-		switch {
-		case errors.Is(err, app.ErrIgnored):
-			return 10
-		case errors.Is(err, app.ErrAnimeNumbering):
-			return 21
-		case errors.Is(err, app.ErrUnresolved):
-			return 20
-		case errors.Is(err, app.ErrConflict):
-			return 30
-		case errors.Is(err, app.ErrTorrent):
-			return 41
-		case errors.Is(err, app.ErrMetadata):
-			return 42
-		case errors.Is(err, app.ErrAI):
-			return 43
-		default:
-			return 50
-		}
+		return exitCode
 	}
 	if *dry {
 		fmt.Println("DRY RUN: no filesystem changes")
@@ -188,3 +199,54 @@ func run() int {
 	return 0
 }
 func usage() { fmt.Fprintln(os.Stderr, "usage: plexlink <doctor|process|inspect|resolve> [options]") }
+
+func processExitCode(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, app.ErrIgnored):
+		return 10
+	case errors.Is(err, app.ErrAnimeNumbering):
+		return 21
+	case errors.Is(err, app.ErrUnresolved):
+		return 20
+	case errors.Is(err, app.ErrConflict):
+		return 30
+	case errors.Is(err, app.ErrTorrent):
+		return 41
+	case errors.Is(err, app.ErrMetadata):
+		return 42
+	case errors.Is(err, app.ErrAI):
+		return 43
+	default:
+		return 50
+	}
+}
+
+func processLogOutcome(result app.Result, err error) (string, bool) {
+	if err == nil {
+		if result.MappingStatus == "PARTIAL" || result.MappingStatus == "CONFLICT" {
+			return string(result.MappingStatus), true
+		}
+		return "SUCCESS", false
+	}
+	if errors.Is(err, app.ErrIgnored) {
+		return "IGNORED", false
+	}
+	switch {
+	case errors.Is(err, app.ErrAnimeNumbering):
+		return "UNRESOLVED_ANIME_NUMBERING", true
+	case errors.Is(err, app.ErrUnresolved):
+		return "UNRESOLVED", true
+	case errors.Is(err, app.ErrConflict):
+		return "CONFLICT", true
+	case errors.Is(err, app.ErrTorrent):
+		return "QBITTORRENT_ERROR", true
+	case errors.Is(err, app.ErrMetadata):
+		return "METADATA_ERROR", true
+	case errors.Is(err, app.ErrAI):
+		return "AI_ERROR", true
+	default:
+		return "FILESYSTEM_ERROR", true
+	}
+}

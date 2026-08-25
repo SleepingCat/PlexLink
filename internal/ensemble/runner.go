@@ -36,7 +36,9 @@ func Execute(ctx context.Context, timeout time.Duration, resolvers []Resolver, r
 		wg.Add(1)
 		go func(index int, resolver Resolver) {
 			defer wg.Done()
+			started := time.Now()
 			result := resolver.Resolve(ctx, req)
+			result.Duration = time.Since(started)
 			if result.Name == "" {
 				result.Name = resolver.Name()
 			}

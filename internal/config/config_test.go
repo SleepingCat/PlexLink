@@ -205,3 +205,39 @@ func TestResolverDirectKeyTakesPrecedenceOverEnvironmentReference(t *testing.T) 
 		t.Fatalf("Kinopoisk key=%q err=%v", key, err)
 	}
 }
+
+func TestLoggingDefaultsDirectoryAndValidation(t *testing.T) {
+	base := "qbittorrent:\n  url: http://qbt\n  username: user\n  password: secret\ntmdb:\n  token: token\npaths:\n  tv_source: tv\n  movie_source: movies\n  anime_source: anime\n  tv_target: ptv\n  movie_target: pmovies\n  anime_target: panime\nstate:\n  directory: state\n"
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Logging.Enabled || cfg.Logging.Level != "info" || cfg.Logging.MaxTotalMB != 50 || cfg.LoggingDirectory() != filepath.Join("state", "logs") {
+		t.Fatalf("logging defaults=%+v dir=%q", cfg.Logging, cfg.LoggingDirectory())
+	}
+	for _, value := range []string{"debug", "info", "warn", "error"} {
+		body := base + "logging:\n  enabled: false\n  level: " + value + "\n  directory: custom-logs\n  max_total_mb: 1\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := Load(path)
+		if err != nil {
+			t.Fatalf("level %q rejected: %v", value, err)
+		}
+		if loaded.Logging.Enabled || loaded.LoggingDirectory() != "custom-logs" {
+			t.Fatalf("explicit logging settings ignored: %+v", loaded.Logging)
+		}
+	}
+	for _, value := range []string{"0", "-1"} {
+		if err := os.WriteFile(path, []byte(base+"logging:\n  max_total_mb: "+value+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("max_total_mb %s accepted", value)
+		}
+	}
+}

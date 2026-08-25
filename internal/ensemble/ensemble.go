@@ -3,6 +3,7 @@ package ensemble
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/SleepingCat/PlexLink/internal/model"
 )
@@ -41,6 +42,7 @@ type ResolverResult struct {
 	Diagnostics []string          `json:"diagnostics,omitempty"`
 	Warnings    []string          `json:"warnings,omitempty"`
 	Error       *OperationalError `json:"error,omitempty"`
+	Duration    time.Duration     `json:"duration,omitempty"`
 }
 
 type OperationalErrorKind string
